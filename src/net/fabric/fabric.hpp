@@ -10,6 +10,7 @@
 #include "rdma/fi_domain.h"
 #include "rdma/fi_endpoint.h"
 #include "rdma/fi_eq.h"
+#include "core.hpp"
 
 namespace sqk {
 namespace net {
@@ -283,7 +284,7 @@ namespace net {
                 );
             }
 
-            int read(Event& event, EventQueueCompleteEntry& ent, Flags flags) {
+	int read(Event& event, EventQueueCompleteEntry& ent, Flags flags) {
                 return fi_eq_read(
                     eq,
                     &event,
@@ -457,9 +458,13 @@ namespace net {
                 MAYBE_THROW(fi_accept, ep_, nullptr, 0);
             }
 
-            template<typename T>
-            void send(MemoryBuffer& buf, size_t size, MemoryRegion& mr, T ctx) {
-                MAYBE_THROW(fi_send, ep_, buf.buf_, size, mr.desc(), 0, ctx);
+            sqk::Task<void>
+            send(MemoryBuffer& buf, size_t size, MemoryRegion& mr) {
+                sqk::Awaker waker;
+                static_assert(sizeof(waker) <= sizeof(uint64_t), "");
+                MAYBE_THROW(fi_send, ep_, buf.buf_, size, mr.desc(), 0, &waker);
+                co_await waker;
+                co_return;
             }
 
             void close() {

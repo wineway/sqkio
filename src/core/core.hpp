@@ -21,12 +21,20 @@ struct SQKScheduler {
     std::list<std::coroutine_handle<>> queue_;
 
   public:
-    int enqueue(std::coroutine_handle<> handle) {
+	template<typename T>
+    int enqueue(Task<T> handle) {
         queue_.push_back(handle);
         return 0;
     }
 
-    [[noreturn]] int run(std::coroutine_handle<> handle) {
+	template<typename T>
+    int enqueue(T handle) {
+        queue_.push_back(handle);
+        return 0;
+    }
+
+	template<typename T>
+    [[noreturn]] int run(Task<T> handle) {
         enqueue(handle);
         for (;;) {
             while (!queue_.empty()) {
@@ -79,6 +87,19 @@ struct SuspendAlways {
     SuspendAlways() : val_() {}
 };
 
+struct SuspendYield {
+    constexpr bool await_ready() const noexcept {
+        return false;
+    }
+
+    void await_suspend(std::coroutine_handle<> handle) noexcept {
+		scheduler->enqueue(handle);
+	}
+
+    void await_resume() const noexcept {
+    }
+};
+
 template<>
 struct SuspendAlways<void> {
     constexpr bool await_ready() const noexcept {
@@ -106,6 +127,10 @@ struct PromiseBase {
 
     void unhandled_exception() {}
 
+	SuspendYield yield_value(nullptr_t) {
+		return {};
+	}
+
     template<typename T2>
     SuspendAlways<T2> await_transform(Task<T2> task) {
         task.promise().caller = get_return_object();
@@ -114,6 +139,11 @@ struct PromiseBase {
                   << " self: " << get_return_object().address() << std::endl;
         return task.promise().result_;
     }
+
+	template<Awakable T2>
+	T2 await_transform(T2 task) {
+		return task;
+	}
 
     Task<T> get_return_object() {
         return {Task<T>::from_promise(*static_cast<S*>(this))};
