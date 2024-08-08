@@ -1,10 +1,10 @@
 project(sched-fab)
 
 add_executable(raw_bin
-	fab.cc
+	raw_fab_util.c
 )
 add_executable(wrapped_bin
-	fab2.cc
+	fabric_util.cc
 )
 
 foreach(X IN ITEMS raw_bin wrapped_bin)

@@ -2,6 +2,8 @@ project(sqk-net-fab)
 
 add_library(${PROJECT_NAME} INTERFACE)
 
+target_link_libraries(${PROJECT_NAME} INTERFACE sqk-core)
+
 target_include_directories(${PROJECT_NAME}
   INTERFACE
 		$<INSTALL_INTERFACE:include>

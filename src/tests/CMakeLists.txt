@@ -1,14 +1,9 @@
 project(sched-core)
 
-# add_library(${PROJECT_NAME} SHARED
-# 	sched.cc
-# )
-
-# add_library(libs::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
-
 add_executable(${PROJECT_NAME}
-	sched.cc
+	core_util.cc
 )
+target_link_libraries(${PROJECT_NAME} sqk-core)
 target_include_directories(${PROJECT_NAME}
 	PUBLIC
 		$<INSTALL_INTERFACE:include>
@@ -17,4 +12,4 @@ target_include_directories(${PROJECT_NAME}
 		${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-add_subdirectory(fab)
+add_subdirectory(fabric)
