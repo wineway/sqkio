@@ -8,8 +8,9 @@ add_executable(wrapped_bin
 )
 
 foreach(X IN ITEMS raw_bin wrapped_bin)
-  target_link_libraries(${X} sqk-net-fab fabric)
-  target_link_directories(${X} PRIVATE ${FABRIC_PATH}/lib)
+  target_include_directories(${X} PRIVATE spdlog_SOURCE_DIR/include)
+  target_link_libraries(${X} sqk-net-fab fabric spdlog)
+  target_link_directories(${X} PRIVATE ${FABRIC_PATH}/lib spdlog_BINARY_DIR)
 endforeach()
 
 

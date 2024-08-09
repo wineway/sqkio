@@ -5,12 +5,12 @@
 #include <string>
 #include <system_error>
 
+#include "core.hpp"
 #include "rdma/fabric.h"
 #include "rdma/fi_cm.h"
 #include "rdma/fi_domain.h"
 #include "rdma/fi_endpoint.h"
 #include "rdma/fi_eq.h"
-#include "core.hpp"
 
 namespace sqk {
 namespace net {
@@ -189,7 +189,7 @@ namespace net {
             void print() {
                 char buf[8192];
                 fi_tostr_r(buf, sizeof(buf), info_, FI_TYPE_INFO);
-                printf("info: %s\n", buf);
+                S_DBUG("info: {}", buf);
             }
 
             FabricAttr get_fabric_attr() {
@@ -234,11 +234,24 @@ namespace net {
         };
 
         class EventQueueCompleteEntry {
-            fi_eq_cm_entry ent_;
+            // FIME: coroutine do not support dyn arr on gcc11.4
+            fi_eq_cm_entry* ent_;
             friend class EventQueue;
 
           public:
-            REDIRECT_INNER(fi_eq_cm_entry, ent_);
+            EventQueueCompleteEntry() {
+                ent_ = new fi_eq_cm_entry;
+            }
+
+            EventQueueCompleteEntry(const EventQueueCompleteEntry&) = delete;
+
+            ~EventQueueCompleteEntry() {
+                delete ent_;
+            }
+
+            EventQueueCompleteEntry&
+            operator=(const EventQueueCompleteEntry&) = delete;
+            REDIRECT_INNER_PTR(fi_eq_cm_entry, ent_);
         };
 
         class CompletionQueueMsgEntry {
@@ -250,21 +263,24 @@ namespace net {
         };
 
         class EventQueue {
-            fid_eq* eq;
+            fid_eq* eq_;
+            std::unordered_map<void*, Awaker*> map_;
+            friend class Endpoint;
 
           public:
             fid* get_fid() {
-                return &eq->fid;
+                return &eq_->fid;
             }
 
-            EventQueue(Fabric& fabric, EventQueueAttr attr) {
+            EventQueue(Fabric& fabric, EventQueueAttr attr) : map_ {} {
                 MAYBE_THROW(
                     fi_eq_open,
                     fabric.fabric_,
                     &attr.attr_,
-                    &eq,
+                    &eq_,
                     nullptr
                 );
+                S_DBUG("EventQueue()");
             }
             HAS_FID_DTOR(EventQueue)
 
@@ -275,23 +291,40 @@ namespace net {
                 Flags flags
             ) {
                 return fi_eq_sread(
-                    eq,
+                    eq_,
                     &event,
-                    &ent.ent_,
-                    sizeof(ent.ent_),
+                    ent.ent_,
+                    sizeof(*ent.ent_),
                     timeout,
                     flags
                 );
             }
 
-	int read(Event& event, EventQueueCompleteEntry& ent, Flags flags) {
-                return fi_eq_read(
-                    eq,
-                    &event,
-                    &ent.ent_,
-                    sizeof(ent.ent_),
-                    flags
-                );
+            int poll(Event& event, Flags flags) {
+                EventQueueCompleteEntry ent;
+                int ret =
+                    fi_eq_read(eq_, &event, ent.ent_, sizeof(*ent.ent_), flags);
+                if (ret > 0) {
+                    if (ret != sizeof(*ent.ent_)) {
+                        S_WARN("eq::read ret: {}", ret);
+                    }
+                    S_DBUG(
+                        "find awaker, fid: {} eq: {}",
+                        fmt::ptr(ent->fid),
+                        fmt::ptr(eq_)
+                    );
+                    auto awaker = map_.find(ent->fid);
+                    if (awaker != map_.end()) {
+                        S_DBUG("awaker: {}", fmt::ptr(awaker->second));
+                        awaker->second->wake();
+                        map_.erase(awaker);
+                    } else {
+                        S_DBUG("no awaker, fid: {}", fmt::ptr(ent->fid));
+                    }
+                } else if (ret != -EAGAIN) {
+                    S_DBUG("eq::poll: {}", ret);
+                }
+                return ret;
             }
         };
 
@@ -403,13 +436,15 @@ namespace net {
 
         class PassiveEndpoint {
             fid_pep* pep_;
+            EventQueue& eq_;
 
           public:
             fid* get_fid() {
                 return &pep_->fid;
             }
 
-            PassiveEndpoint(Fabric& fabric, Info& info) {
+            PassiveEndpoint(Fabric& fabric, Info& info, EventQueue& eq) :
+                eq_(eq) {
                 MAYBE_THROW(
                     fi_passive_ep,
                     fabric.fabric_,
@@ -417,6 +452,7 @@ namespace net {
                     &pep_,
                     nullptr
                 );
+                bind(eq_);
             }
 
             HAS_FID_DTOR(PassiveEndpoint)
@@ -433,13 +469,20 @@ namespace net {
 
         class Endpoint {
             fid_ep* ep_;
+            EventQueue& eq_;
 
             fid* get_fid() {
                 return &ep_->fid;
             }
 
           public:
-            Endpoint(Domain& domain, Info& info) {
+            Endpoint(
+                Domain& domain,
+                Info& info,
+                EventQueue& eq,
+                CompletionQueue& cq
+            ) :
+                eq_(eq) {
                 MAYBE_THROW(
                     fi_endpoint,
                     domain.domain_,
@@ -447,6 +490,8 @@ namespace net {
                     &ep_,
                     NULL
                 );
+                bind(eq, 0);
+                bind(cq, FI_TRANSMIT | FI_RECV);
             }
 
             template<HasFid T>
@@ -454,8 +499,22 @@ namespace net {
                 MAYBE_THROW(fi_ep_bind, ep_, e.get_fid(), flags);
             }
 
-            void accept() {
+            void accept1() {
                 MAYBE_THROW(fi_accept, ep_, nullptr, 0);
+                S_DBUG("fid: {}", fmt::ptr(get_fid()));
+            }
+
+            sqk::Task<void> accept() {
+                MAYBE_THROW(fi_accept, ep_, nullptr, 0);
+                Awaker awaker;
+                eq_.map_.emplace(get_fid(), &awaker);
+                S_DBUG(
+                    "emplace: {}->{}",
+                    fmt::ptr(get_fid()),
+                    fmt::ptr(&awaker)
+                );
+                co_await awaker;
+                S_DBUG("awaker done");
             }
 
             sqk::Task<void>
@@ -464,7 +523,6 @@ namespace net {
                 static_assert(sizeof(waker) <= sizeof(uint64_t), "");
                 MAYBE_THROW(fi_send, ep_, buf.buf_, size, mr.desc(), 0, &waker);
                 co_await waker;
-                co_return;
             }
 
             void close() {

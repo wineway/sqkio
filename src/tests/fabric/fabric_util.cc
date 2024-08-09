@@ -17,8 +17,7 @@ run(Fabric& fabric,
     keys& keys,
     MemoryBuffer& buf,
     MemoryRegion& mr) {
-    PassiveEndpoint pep(fabric, info);
-    pep.bind(eq);
+    PassiveEndpoint pep(fabric, info, eq);
     pep.listen();
 
     uint64_t cnt {};
@@ -28,7 +27,7 @@ run(Fabric& fabric,
         EventQueueCompleteEntry ent;
 
         while (true) {
-            rc = eq.read(event, ent, 0);
+            rc = eq.sread(event, ent, -1, 0);
             if (rc == -EAGAIN) {
                 cnt++;
                 continue;
@@ -36,28 +35,19 @@ run(Fabric& fabric,
             break;
         }
 
-        printf("evt: %d, cnt: %lu\n", event, cnt);
+        spdlog::info("evt: %d, cnt: %lu", event, cnt);
         Info in2 = Info::from_raw(ent->info);
-        Endpoint ep(domain, in2);
-        ep.bind(eq, 0);
-        ep.bind(cq, FI_TRANSMIT | FI_RECV);
-        ep.accept();
+        Endpoint ep(domain, in2, eq, cq);
+        co_await ep.accept();
 
-        while (true) {
-            rc = eq.read(event, ent, 0);
-            if (rc == -EAGAIN) {
-                cnt++;
-                continue;
-            }
-            break;
-        }
-
-        printf("evt: %d, cnt: %lu\n", event, cnt);
+        spdlog::info("evt: %d, cnt: %lu\n", event, cnt);
         memcpy(buf.buf_, &keys, sizeof(keys));
+        std::cout << "send() before" << std::endl;
         co_await ep.send(buf, sizeof(keys), mr);
 
+        std::cout << "send() end" << std::endl;
         while (true) {
-            rc = eq.read(event, ent, 0);
+            rc = eq.poll(event, 0);
             if (rc == -EAGAIN) {
                 cnt++;
                 continue;
@@ -65,11 +55,16 @@ run(Fabric& fabric,
             break;
         }
 
-        printf("evt: %d, cnt: %lu\n", event, cnt);
+        spdlog::info("evt: %d, cnt: %lu\n", event, cnt);
     }
 }
 
 int main() {
+    S_LOGGER_SETUP;
+    S_INFO("S_INFO");
+    SPDLOG_INFO("info");
+    SPDLOG_DEBUG("debug");
+    printf("SPDLOG_ACTIVE_LEVEL: %d\n", SPDLOG_ACTIVE_LEVEL);
     sqk::scheduler = new sqk::SQKScheduler;
     keys keys;
     Info hint = Info()
@@ -110,18 +105,19 @@ int main() {
     keys.rkey = mr.key();
     keys.addr = (uint64_t)buf.buf_;
 
-    sqk::scheduler->enqueue([&eq]() -> sqk::Task<void> {
+    // spdlog::info("1. eq: %p", &eq);
+    sqk::scheduler->enqueue([](EventQueue& eq) -> sqk::Task<void> {
         Event event;
         int rc;
         EventQueueCompleteEntry ent;
         for (;;) {
-            rc = eq.read(event, ent, 0);
+            rc = eq.poll(event, 0);
             co_yield nullptr;
         }
         co_return;
-    }());
+    }(eq));
 
-    sqk::scheduler->enqueue([&cq]() -> sqk::Task<void> {
+    sqk::scheduler->enqueue([](CompletionQueue& cq) -> sqk::Task<void> {
         CompletionQueueMsgEntry cqe;
         for (;;) {
             int rc;
@@ -129,11 +125,15 @@ int main() {
             if (rc == 1) {
                 auto awaker = static_cast<sqk::Awaker*>(cqe->op_context);
                 awaker->wake();
+                std::cout << "awaker: " << awaker << std::endl;
+            }
+            if (rc != -EAGAIN) {
+                std::cout << "rc: " << rc << std::endl;
             }
             co_yield nullptr;
         }
         co_return;
-    }());
+    }(cq));
 
     sqk::scheduler->run(run(fabric, info, eq, cq, domain, keys, buf, mr));
     return 0;

@@ -9,4 +9,11 @@ target_include_directories(${PROJECT_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+if (WITH_SPDLOG)
+target_include_directories(${PROJECT_NAME}
+  INTERFACE
+		${spdlog_SOURCE_DIR}/include
+  )
+endif()
+
 

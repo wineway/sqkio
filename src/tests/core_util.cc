@@ -1,14 +1,18 @@
 #include "core.hpp"
 
+using double_t = double;
+
 class A {
-	public:
-	A() {
-		std::cout << "A() " << this << std::endl;
-	}
-	~A() {
-		std::cout << "~A() " << this << std::endl;
-	}
+  public:
+    A() {
+        std::cout << "A() " << this << std::endl;
+    }
+
+    ~A() {
+        std::cout << "~A() " << this << std::endl;
+    }
 };
+
 sqk::Task<A> f() {
     std::cout << "f()" << std::endl;
     co_return A();
@@ -16,12 +20,12 @@ sqk::Task<A> f() {
 
 sqk::Task<double_t> k() {
     std::cout << "k()" << std::endl;
-	co_return 1.1;
+    co_return 1.1;
 }
 
 sqk::Task<void> j() {
-	std::cout << "j()" << std::endl;
-	co_return;
+    std::cout << "j()" << std::endl;
+    co_return;
 }
 
 sqk::Task<int> g() {
