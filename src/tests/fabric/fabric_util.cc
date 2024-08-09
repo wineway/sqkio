@@ -22,49 +22,28 @@ run(Fabric& fabric,
 
     uint64_t cnt {};
     for (;;) {
-        Event event;
         int rc;
-        EventQueueCompleteEntry ent;
+        Info in2 = co_await pep.next();
 
-        while (true) {
-            rc = eq.sread(event, ent, -1, 0);
-            if (rc == -EAGAIN) {
-                cnt++;
-                continue;
-            }
-            break;
-        }
-
-        spdlog::info("evt: %d, cnt: %lu", event, cnt);
-        Info in2 = Info::from_raw(ent->info);
+        S_INFO("evt, cnt: {}", cnt);
         Endpoint ep(domain, in2, eq, cq);
         co_await ep.accept();
 
-        spdlog::info("evt: %d, cnt: %lu\n", event, cnt);
+        S_INFO("evt, cnt: {}", cnt);
         memcpy(buf.buf_, &keys, sizeof(keys));
-        std::cout << "send() before" << std::endl;
+        S_INFO("send() before");
         co_await ep.send(buf, sizeof(keys), mr);
 
-        std::cout << "send() end" << std::endl;
-        while (true) {
-            rc = eq.poll(event, 0);
-            if (rc == -EAGAIN) {
-                cnt++;
-                continue;
-            }
-            break;
-        }
+        S_INFO("send() end");
 
-        spdlog::info("evt: %d, cnt: %lu\n", event, cnt);
+        co_await ep.wait_disconn();
+
+        S_INFO("evt, cnt: {}", cnt);
     }
 }
 
 int main() {
     S_LOGGER_SETUP;
-    S_INFO("S_INFO");
-    SPDLOG_INFO("info");
-    SPDLOG_DEBUG("debug");
-    printf("SPDLOG_ACTIVE_LEVEL: %d\n", SPDLOG_ACTIVE_LEVEL);
     sqk::scheduler = new sqk::SQKScheduler;
     keys keys;
     Info hint = Info()
@@ -105,7 +84,6 @@ int main() {
     keys.rkey = mr.key();
     keys.addr = (uint64_t)buf.buf_;
 
-    // spdlog::info("1. eq: %p", &eq);
     sqk::scheduler->enqueue([](EventQueue& eq) -> sqk::Task<void> {
         Event event;
         int rc;
@@ -123,12 +101,12 @@ int main() {
             int rc;
             rc = cq.read(cqe);
             if (rc == 1) {
-                auto awaker = static_cast<sqk::Awaker*>(cqe->op_context);
+                auto awaker = static_cast<sqk::Awaker<void>*>(cqe->op_context);
                 awaker->wake();
-                std::cout << "awaker: " << awaker << std::endl;
+                S_INFO("awaker: {}", fmt::ptr(awaker));
             }
             if (rc != -EAGAIN) {
-                std::cout << "rc: " << rc << std::endl;
+                S_INFO("rc: {}", rc);
             }
             co_yield nullptr;
         }

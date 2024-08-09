@@ -14,8 +14,12 @@ struct SuspendAlways;
 template<typename T>
 struct Promise;
 
-template<typename T>
-concept Awakable = requires(T a) { a.wake(); };
+template<typename T, typename S>
+concept Awakable_Void = requires(T a) { a.wake(); } && std::is_void_v<S>;
+template<typename T, typename S>
+concept Awakable_T = requires(T a, S p) { a.wake(p); };
+template<typename T, typename S>
+concept Awakable = Awakable_T<T, S> || Awakable_Void<T, S>;
 
 template<typename T>
 struct Task: std::coroutine_handle<Promise<T>> {
@@ -53,13 +57,13 @@ struct SQKScheduler {
 
 static inline SQKScheduler* scheduler;
 
-struct Awaker {
+struct Awaker_Base {
     std::coroutine_handle<> handle_ {nullptr};
 
-    Awaker() {}
+    constexpr Awaker_Base() noexcept {}
 
-    Awaker(Awaker&) = delete;
-    Awaker& operator=(Awaker&) = delete;
+    Awaker_Base(Awaker_Base&) = delete;
+    Awaker_Base& operator=(Awaker_Base&) = delete;
 
     bool await_ready() {
         S_DBUG("await_ready: {}", fmt::ptr(this));
@@ -74,9 +78,42 @@ struct Awaker {
         );
         handle_ = handle;
     }
+};
 
-    void await_resume() const noexcept {
+template<typename T>
+struct Awaker: Awaker_Base {
+    T ret_;
+
+    T await_resume() noexcept {
+        S_DBUG("await_resume: {}={}", fmt::ptr(this), fmt::ptr(&ret_));
+        handle_ = nullptr;
+        return std::move(ret_);
+    }
+
+    void wake(T&& ret) {
+        S_DBUG(
+            "wake: {}, {}={}",
+            fmt::ptr(this),
+            fmt::ptr(handle_.address()),
+            fmt::ptr(&ret)
+        );
+        if (handle_) {
+            S_DBUG(
+                "enqueue: {}, {}",
+                fmt::ptr(this),
+                fmt::ptr(handle_.address())
+            );
+            scheduler->enqueue(handle_);
+        }
+        ret_ = std::move(ret);
+    }
+};
+
+template<>
+struct Awaker<void>: Awaker_Base {
+    void await_resume() noexcept {
         S_DBUG("await_resume: {}", fmt::ptr(this));
+        handle_ = nullptr;
     }
 
     void wake() {
@@ -102,9 +139,9 @@ struct SuspendAlways {
 
     void await_suspend(std::coroutine_handle<> handle) noexcept {}
 
-    T await_resume() const noexcept {
+    T&& await_resume() noexcept {
         S_DBUG("await_resume");
-        return val_;
+        return std::move(val_);
     }
 
     SuspendAlways() : val_() {}
@@ -152,7 +189,7 @@ struct PromiseBase {
     }
 
     template<typename T2>
-    SuspendAlways<T2> await_transform(Task<T2> task) {
+    SuspendAlways<T2>&& await_transform(Task<T2> task) {
         task.promise().caller = get_return_object();
         scheduler->enqueue(task);
         S_DBUG(
@@ -160,11 +197,11 @@ struct PromiseBase {
             task.address(),
             get_return_object().address()
         );
-        return task.promise().result_;
+        return std::move(task.promise().result_);
     }
 
-    template<Awakable T2>
-    T2& await_transform(T2& task) {
+    template</*typename T2, */ typename T1>
+    T1& await_transform(T1& task) /*requires Awakable<T2, T1>*/ {
         return task;
     }
 
@@ -186,9 +223,9 @@ struct PromiseBase {
 
 template<typename T>
 struct Promise: PromiseBase<T, Promise<T>> {
-    void return_value(T ret) {
+    void return_value(T&& ret) {
         std::cout << "return_value" << std::endl;
-        this->result_.val_ = ret;
+        this->result_.val_ = std::move(ret);
         this->resume_caller();
         S_DBUG("return_value quit {}", this->get_return_object().address());
     }

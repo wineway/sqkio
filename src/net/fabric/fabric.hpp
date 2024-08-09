@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <system_error>
+#include <unordered_set>
 
 #include "core.hpp"
 #include "rdma/fabric.h"
@@ -261,11 +262,18 @@ namespace net {
           public:
             REDIRECT_INNER(fi_cq_msg_entry, ent_);
         };
+        class PassiveEndpoint;
 
         class EventQueue {
             fid_eq* eq_;
-            std::unordered_map<void*, Awaker*> map_;
+            std::unordered_map<void*, Awaker<void>*> map_;
             friend class Endpoint;
+            friend class PassiveEndpoint;
+            std::unordered_map<fid*, void*> peps_;
+            template<HasFid T>
+            void add_ep(T* ep);
+            template<HasFid T>
+            void del_ep(T* ep);
 
           public:
             fid* get_fid() {
@@ -300,32 +308,7 @@ namespace net {
                 );
             }
 
-            int poll(Event& event, Flags flags) {
-                EventQueueCompleteEntry ent;
-                int ret =
-                    fi_eq_read(eq_, &event, ent.ent_, sizeof(*ent.ent_), flags);
-                if (ret > 0) {
-                    if (ret != sizeof(*ent.ent_)) {
-                        S_WARN("eq::read ret: {}", ret);
-                    }
-                    S_DBUG(
-                        "find awaker, fid: {} eq: {}",
-                        fmt::ptr(ent->fid),
-                        fmt::ptr(eq_)
-                    );
-                    auto awaker = map_.find(ent->fid);
-                    if (awaker != map_.end()) {
-                        S_DBUG("awaker: {}", fmt::ptr(awaker->second));
-                        awaker->second->wake();
-                        map_.erase(awaker);
-                    } else {
-                        S_DBUG("no awaker, fid: {}", fmt::ptr(ent->fid));
-                    }
-                } else if (ret != -EAGAIN) {
-                    S_DBUG("eq::poll: {}", ret);
-                }
-                return ret;
-            }
+            int poll(Event& event, Flags flags);
         };
 
         class Domain {
@@ -438,6 +421,9 @@ namespace net {
             fid_pep* pep_;
             EventQueue& eq_;
 
+            friend class EventQueue;
+            Awaker<Info> awaker_;
+
           public:
             fid* get_fid() {
                 return &pep_->fid;
@@ -453,9 +439,24 @@ namespace net {
                     nullptr
                 );
                 bind(eq_);
+                eq_.add_ep(this);
             }
 
-            HAS_FID_DTOR(PassiveEndpoint)
+            ~PassiveEndpoint() {
+                eq_.del_ep(this);
+                fi_close(get_fid());
+            }
+
+            sqk::Task<Info> next() {
+                S_DBUG("before waiter {}", fmt::ptr(&awaker_));
+                Info info = co_await awaker_;
+                S_DBUG(
+                    "after waiter {}, ret: {}",
+                    fmt::ptr(&awaker_),
+                    fmt::ptr(info.info_)
+                );
+                co_return std::move(info);
+            }
 
             template<HasFid T>
             void bind(T& e) {
@@ -467,13 +468,26 @@ namespace net {
             }
         };
 
+        template<HasFid T>
+        inline void EventQueue::add_ep(T* ep) {
+            this->peps_.emplace(ep->get_fid(), ep);
+        }
+
+        template<HasFid T>
+        inline void EventQueue::del_ep(T* ep) {
+            this->peps_.erase(ep->get_fid());
+        }
+
         class Endpoint {
             fid_ep* ep_;
             EventQueue& eq_;
+            Awaker<void> stop_waker_;
 
             fid* get_fid() {
                 return &ep_->fid;
             }
+
+            friend class EventQueue;
 
           public:
             Endpoint(
@@ -491,6 +505,7 @@ namespace net {
                     NULL
                 );
                 bind(eq, 0);
+                eq.add_ep(this);
                 bind(cq, FI_TRANSMIT | FI_RECV);
             }
 
@@ -499,14 +514,13 @@ namespace net {
                 MAYBE_THROW(fi_ep_bind, ep_, e.get_fid(), flags);
             }
 
-            void accept1() {
-                MAYBE_THROW(fi_accept, ep_, nullptr, 0);
-                S_DBUG("fid: {}", fmt::ptr(get_fid()));
+            Task<void> wait_disconn() {
+                co_await stop_waker_;
             }
 
             sqk::Task<void> accept() {
                 MAYBE_THROW(fi_accept, ep_, nullptr, 0);
-                Awaker awaker;
+                Awaker<void> awaker;
                 eq_.map_.emplace(get_fid(), &awaker);
                 S_DBUG(
                     "emplace: {}->{}",
@@ -519,8 +533,7 @@ namespace net {
 
             sqk::Task<void>
             send(MemoryBuffer& buf, size_t size, MemoryRegion& mr) {
-                sqk::Awaker waker;
-                static_assert(sizeof(waker) <= sizeof(uint64_t), "");
+                sqk::Awaker<void> waker;
                 MAYBE_THROW(fi_send, ep_, buf.buf_, size, mr.desc(), 0, &waker);
                 co_await waker;
             }
@@ -530,10 +543,68 @@ namespace net {
             }
 
             ~Endpoint() {
+                eq_.del_ep(this);
                 fi_shutdown(ep_, 0);
                 fi_close(get_fid());
             }
         };
+
+        inline int EventQueue::poll(Event& event, Flags flags) {
+            EventQueueCompleteEntry ent;
+            int ret =
+                fi_eq_read(eq_, &event, ent.ent_, sizeof(*ent.ent_), flags);
+            if (ret > 0) {
+                if (ret != sizeof(*ent.ent_)) {
+                    S_WARN("eq::read ret: {}", ret);
+                }
+                S_DBUG(
+                    "find awaker, fid: {} eq: {}",
+                    fmt::ptr(ent->fid),
+                    fmt::ptr(eq_)
+                );
+                if (event == FI_CONNREQ) {
+                    auto iter = peps_.find(ent->fid);
+                    if (iter == peps_.end()) {
+                        S_WARN("drop connreq: fid={}", fmt::ptr(ent->fid));
+                    }
+                    auto& awaker =
+                        static_cast<PassiveEndpoint*>(iter->second)->awaker_;
+                    S_DBUG(
+                        "wakeup : {}, fid={}",
+                        fmt::ptr(&awaker),
+                        fmt::ptr(ent->info)
+                    );
+                    awaker.wake(Info::from_raw(ent->info));
+                    return ret;
+                }
+                if (event == FI_SHUTDOWN) {
+                    auto iter = peps_.find(ent->fid);
+                    if (iter == peps_.end()) {
+                        S_WARN("drop connreq: fid={}", fmt::ptr(ent->fid));
+                    }
+                    auto& awaker =
+                        static_cast<Endpoint*>(iter->second)->stop_waker_;
+                    S_DBUG(
+                        "wakeup : {}, fid={}",
+                        fmt::ptr(&awaker),
+                        fmt::ptr(ent->info)
+                    );
+                    awaker.wake();
+                    return ret;
+                }
+                auto awaker = map_.find(ent->fid);
+                if (awaker != map_.end()) {
+                    S_DBUG("awaker: {}", fmt::ptr(awaker->second));
+                    awaker->second->wake();
+                    map_.erase(awaker);
+                } else {
+                    S_DBUG("no awaker, fid: {}", fmt::ptr(ent->fid));
+                }
+            } else if (ret != -EAGAIN) {
+                S_DBUG("eq::poll: {}", ret);
+            }
+            return ret;
+        }
     } // namespace fab
 } // namespace net
 } // namespace sqk
