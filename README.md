@@ -1,5 +1,12 @@
 # sqkio
 
+[![MIT licensed][mit-badge]][mit-url]
+[![Build](https://github.com/wineway/sqkio/actions/workflows/cmake-single-platform.yml/badge.svg)](https://github.com/wineway/sqkio/actions/workflows/cmake-single-platform.yml)
+
+[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
+[mit-url]: https://github.com/wineway/sqkio/blob/main/LICENSE
+
+
 <div align="center">
   <picture>
     <img alt=""
@@ -19,11 +26,6 @@ A runtime for writing reliable, asynchronous, and slim applications. It is:
 
 * **Scalable**: sqkio has a minimal footprint, and handles backpressure
   and cancellation naturally.
-
-[![MIT licensed][mit-badge]][mit-url]
-
-[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
-[mit-url]: https://github.com/wineway/sqkio/blob/main/LICENSE
 
 [![Readme Card](https://github-readme-stats.vercel.app/api/pin/?username=wineway&repo=sqkio)](https://github.com/wineway/sqkio)
 
