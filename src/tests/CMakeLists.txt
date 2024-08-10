@@ -1,9 +1,10 @@
-project(sched-core)
+project(core-test)
 
 add_executable(${PROJECT_NAME}
 	core_util.cc
 )
-target_link_libraries(${PROJECT_NAME} sqk-core)
+add_test(NAME SCHED_TEST COMMAND ${PROJECT_NAME})
+target_link_libraries(${PROJECT_NAME} core)
 target_include_directories(${PROJECT_NAME}
 	PUBLIC
 		$<INSTALL_INTERFACE:include>
@@ -12,4 +13,8 @@ target_include_directories(${PROJECT_NAME}
 		${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+if (INSTALL_SQKIO)
+  install(TARGETS ${PROJECT_NAME}
+  RUNTIME DESTINATION ${SQKIO_INSTALL_BINDIR})
+endif()
 add_subdirectory(fabric)

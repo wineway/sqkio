@@ -1,4 +1,4 @@
-project(sqk-core)
+project(core)
 
 add_library(${PROJECT_NAME} INTERFACE)
 
@@ -9,6 +9,11 @@ target_include_directories(${PROJECT_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+target_sources(${PROJECT_NAME}
+        INTERFACE FILE_SET HEADERS
+        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+        FILES core.hpp log.hpp)
+
 if (WITH_SPDLOG)
 target_include_directories(${PROJECT_NAME}
   INTERFACE
@@ -16,4 +21,11 @@ target_include_directories(${PROJECT_NAME}
   )
 endif()
 
+if (INSTALL_SQKIO)
+set(test_dir /tmp)
+  install(TARGETS ${PROJECT_NAME}
+EXPORT "${PROJECT_NAME}Targets"
+        FILE_SET HEADERS DESTINATION ${SQKIO_INSTALL_INCLUDEDIR}
+  )
+endif()
 

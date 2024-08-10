@@ -33,6 +33,7 @@ sqk::Task<int> g() {
     std::cout << "assigned" << std::endl;
     co_await k();
     std::cout << "g()" << std::endl;
+    exit(0);
     co_return 1;
 }
 

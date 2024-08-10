@@ -1,4 +1,4 @@
-project(sqk-net)
+project(net)
 if (WITH_NET_FABRIC)
   add_subdirectory(fabric)
 endif()
