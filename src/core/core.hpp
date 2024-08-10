@@ -182,7 +182,10 @@ struct PromiseBase {
         return {};
     }
 
-    void unhandled_exception() {}
+    void unhandled_exception() {
+        S_INFO("unhandled exception");
+        std::rethrow_exception(std::current_exception());
+    }
 
     SuspendYield yield_value(std::nullptr_t) {
         return {};

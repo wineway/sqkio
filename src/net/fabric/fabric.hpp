@@ -81,11 +81,17 @@ namespace net {
         };
 
 #define REDIRECT_INNER(type, member)                                           \
-    const type* operator->() const noexcept {                                  \
+    type* operator->() noexcept {                                              \
+        return &member;                                                        \
+    }                                                                          \
+    operator type*() noexcept {                                                \
         return &member;                                                        \
     }
 #define REDIRECT_INNER_PTR(type, member)                                       \
     type* operator->() const noexcept {                                        \
+        return member;                                                         \
+    }                                                                          \
+    operator type*() noexcept {                                                \
         return member;                                                         \
     }
 
@@ -112,8 +118,27 @@ namespace net {
             friend class Fabric;
 
           public:
+            REDIRECT_INNER_PTR(fi_fabric_attr, attr_);
             FabricAttr(fi_fabric_attr* attr) : attr_(attr) {}
         };
+
+        class AddressVectorAttr {
+            fi_av_attr attr_;
+
+          public:
+            REDIRECT_INNER(fi_av_attr, attr_);
+        };
+
+class Address {
+    fi_addr_t addr_;
+public:
+    operator fi_addr_t () {
+        return addr_;
+    }
+    fi_addr_t* operator()() {
+        return &addr_;
+    }
+};
 
         class Info {
             fi_info* info_;
@@ -151,6 +176,13 @@ namespace net {
                 rhs.info_ = nullptr;
             };
 
+            void* dst_addr() {
+                return info_->dest_addr;
+            }
+
+            void* src_addr() {
+                return info_->src_addr;
+            }
             Info& operator=(const Info& info) = delete;
 
             Info&& operator=(Info&& rhs) {
@@ -193,22 +225,27 @@ namespace net {
                 S_DBUG("info: {}", buf);
             }
 
+            Self with_fabric_attr(std::function<void(FabricAttr)> fn) {
+                fn(FabricAttr(info_->fabric_attr));
+                return std::move(*this);
+            }
+
             FabricAttr get_fabric_attr() {
                 return FabricAttr(info_->fabric_attr);
             }
 
             static Info get_info(
                 std::optional<std::string> node,
-                std::string service,
+                std::optional<std::string> service,
                 Flags flags,
-                Info hint
+                Info& hint
             ) {
                 fi_info* info;
                 MAYBE_THROW(
                     fi_getinfo,
                     FI_VER,
                     node ? node.value().c_str() : nullptr,
-                    service.c_str(),
+                    service ? service.value().c_str() : nullptr,
                     flags,
                     hint.info_,
                     &info
@@ -256,10 +293,12 @@ namespace net {
         };
 
         class CompletionQueueMsgEntry {
+        Address addr_;
             fi_cq_msg_entry ent_;
             friend class CompletionQueue;
 
           public:
+        Address addr() { return addr_; }
             REDIRECT_INNER(fi_cq_msg_entry, ent_);
         };
         class PassiveEndpoint;
@@ -312,12 +351,12 @@ namespace net {
         };
 
         class Domain {
-            fid_domain* domain_;
             friend class CompletionQueue;
             friend class MemoryRegion;
             friend class Endpoint;
 
           public:
+            fid_domain* domain_;
             fid* get_fid() {
                 return &domain_->fid;
             }
@@ -354,13 +393,22 @@ namespace net {
             }
             HAS_FID_DTOR(CompletionQueue)
 
-            int sread(CompletionQueueMsgEntry& ent, int timeout) {
-                return fi_cq_sread(cq, &ent, 1, nullptr, timeout);
+        int poll() {
+            CompletionQueueMsgEntry ent;
+            int rc = fi_cq_readfrom(cq, &ent, 1, ent.addr_());
+            if (rc != -EAGAIN) {
+                S_WARN("fi_cq_readfrom: rc={}", rc);
+            } else if (rc == 1 && ent->flags & FI_RECV) {
+                auto awaker = static_cast<Awaker<Address>*>(ent->op_context);
+                awaker->wake(ent.addr());
+            } else if (rc == 1 && ent->flags & FI_SEND) {
+                auto awaker = static_cast<Awaker<void>*>(ent->op_context);
+                awaker->wake();
+            } else if (rc == 1) {
+                S_ERROR("unexpected event={}", ent->flags);
             }
-
-            int read(CompletionQueueMsgEntry& ent) {
-                return fi_cq_read(cq, &ent, 1);
-            }
+            return rc;
+        }
         };
 
         class MemoryBuffer {
@@ -478,6 +526,28 @@ namespace net {
             this->peps_.erase(ep->get_fid());
         }
 
+        class AddressVector {
+            fid_av* av_;
+
+          public:
+            fid* get_fid() {
+                return &av_->fid;
+            }
+
+            REDIRECT_INNER_PTR(fid_av, av_);
+
+            AddressVector(Domain& domain, AddressVectorAttr& attr) {
+                fi_av_open(domain.domain_, attr, &av_, nullptr);
+            }
+
+            Address insert(void* opaque_addr) {
+                Address addr;
+                int rc = fi_av_insert(av_, opaque_addr, 1, addr(), 0, addr());
+                assert(rc == 1);
+                return addr;
+            }
+        };
+
         class Endpoint {
             fid_ep* ep_;
             EventQueue& eq_;
@@ -494,7 +564,8 @@ namespace net {
                 Domain& domain,
                 Info& info,
                 EventQueue& eq,
-                CompletionQueue& cq
+                CompletionQueue& cq,
+                std::optional<AddressVector> av = std::nullopt
             ) :
                 eq_(eq) {
                 MAYBE_THROW(
@@ -507,6 +578,10 @@ namespace net {
                 bind(eq, 0);
                 eq.add_ep(this);
                 bind(cq, FI_TRANSMIT | FI_RECV);
+                if (av) {
+                    bind(av.value(), 0);
+                }
+                MAYBE_THROW(fi_enable, ep_);
             }
 
             template<HasFid T>
@@ -531,12 +606,34 @@ namespace net {
                 S_DBUG("awaker done");
             }
 
-            sqk::Task<void>
-            send(MemoryBuffer& buf, size_t size, MemoryRegion& mr) {
+            sqk::Task<void> send(
+                MemoryBuffer& buf,
+                size_t size,
+                MemoryRegion& mr,
+                std::optional<Address> dst = std::nullopt
+            ) {
                 sqk::Awaker<void> waker;
-                MAYBE_THROW(fi_send, ep_, buf.buf_, size, mr.desc(), 0, &waker);
+                MAYBE_THROW(
+                    fi_send,
+                    ep_,
+                    buf.buf_,
+                    size,
+                    mr.desc(),
+                    dst ? dst.value() : 0,
+                    &waker
+                );
                 co_await waker;
             }
+
+        sqk::Task<Address>
+        recv(MemoryBuffer& buf, size_t size, MemoryRegion& mr) {
+        sqk::Awaker<Address> waker;
+            S_DBUG("fi_recv: {}", fmt::ptr(&waker));
+            MAYBE_THROW(fi_recv, ep_, buf.buf_, size, mr.desc(), 0, &waker);
+            Address addr = co_await waker;
+            co_return addr;
+
+        }
 
             void close() {
                 MAYBE_THROW(fi_close, &ep_->fid);

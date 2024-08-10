@@ -46,21 +46,20 @@ int main() {
     S_LOGGER_SETUP;
     sqk::scheduler = new sqk::SQKScheduler;
     keys keys;
-    Info hint = Info()
-                    .with_caps(FI_MSG | FI_RMA)
-                    .with_addr_format(FI_SOCKADDR_IN)
-                    .with_ep_attr([](auto ea) { ea->type = FI_EP_MSG; })
-                    .with_mode(FI_MR_LOCAL | FI_CONTEXT | FI_RX_CQ_DATA)
-                    .with_domain_attr([](auto da) {
-                        da->mr_mode =
-                            FI_MR_BASIC; // | FI_MR_ENDPOINT | FI_MR_ALLOCATED |
-                        // FI_MR_PROV_KEY | FI_MR_VIRT_ADDR | FI_MR_RAW;
-                    });
+    Info hint =
+        Info()
+            .with_caps(FI_MSG | FI_RMA)
+            .with_addr_format(FI_SOCKADDR_IN)
+            .with_ep_attr([](auto ea) { ea->type = FI_EP_RDM; })
+            .with_mode(FI_CONTEXT)
+            .with_domain_attr([](auto da) { da->mr_mode = FI_RX_CQ_DATA; })
+            .with_fabric_attr([](auto fa) {
+                fa->name = strdup("verbs;ofi_rxm");
+            });
 
     hint.print();
 
-    auto info =
-        Info::get_info(std::nullopt, "1234", FI_SOURCE, std::move(hint));
+    auto info = Info::get_info(std::nullopt, "1234", FI_SOURCE, hint);
     info.print();
 
     Fabric fabric(info.get_fabric_attr());
@@ -99,15 +98,7 @@ int main() {
         CompletionQueueMsgEntry cqe;
         for (;;) {
             int rc;
-            rc = cq.read(cqe);
-            if (rc == 1) {
-                auto awaker = static_cast<sqk::Awaker<void>*>(cqe->op_context);
-                awaker->wake();
-                S_INFO("awaker: {}", fmt::ptr(awaker));
-            }
-            if (rc != -EAGAIN) {
-                S_INFO("rc: {}", rc);
-            }
+            rc = cq.poll();
             co_yield nullptr;
         }
         co_return;

@@ -257,6 +257,7 @@ int server(void) {
     hints->addr_format = FI_SOCKADDR_IN;
     hints->ep_attr->type = FI_EP_MSG;
     hints->domain_attr->mr_mode = FI_MR_BASIC;
+    hints->domain_attr->name = "mlx5_bond_0";
     hints->mode = FI_CONTEXT | FI_LOCAL_MR | FI_RX_CQ_DATA;
 
     int ret = common_init(NULL, FI_SOURCE);
