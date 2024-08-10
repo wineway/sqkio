@@ -1,7 +1,7 @@
 # sqkio
 
 [![MIT licensed][mit-badge]][mit-url]
-[![Build](https://github.com/wineway/sqkio/actions/workflows/cmake-single-platform.yml/badge.svg)](https://github.com/wineway/sqkio/actions/workflows/cmake-single-platform.yml)
+[![Build](https://github.com/wineway/sqkio/actions/workflows/ci.yml/badge.svg)](https://github.com/wineway/sqkio/actions/workflows/ci.yml)
 
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [mit-url]: https://github.com/wineway/sqkio/blob/main/LICENSE
