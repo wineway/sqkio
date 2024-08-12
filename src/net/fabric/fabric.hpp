@@ -234,6 +234,10 @@ public:
                 return FabricAttr(info_->fabric_attr);
             }
 
+            DomainAttr get_domain_attr() {
+                return DomainAttr(info_->domain_attr);
+            }
+
             static Info get_info(
                 std::optional<std::string> node,
                 std::optional<std::string> service,
@@ -396,7 +400,7 @@ public:
         int poll() {
             CompletionQueueMsgEntry ent;
             int rc = fi_cq_readfrom(cq, &ent, 1, ent.addr_());
-            if (rc != -EAGAIN) {
+            if (rc != -EAGAIN && rc < 0) {
                 S_WARN("fi_cq_readfrom: rc={}", rc);
             } else if (rc == 1 && ent->flags & FI_RECV) {
                 auto awaker = static_cast<Awaker<Address>*>(ent->op_context);
@@ -406,6 +410,8 @@ public:
                 awaker->wake();
             } else if (rc == 1) {
                 S_ERROR("unexpected event={}", ent->flags);
+            } else {
+                assert(rc == -EAGAIN);
             }
             return rc;
         }
@@ -613,15 +619,23 @@ public:
                 std::optional<Address> dst = std::nullopt
             ) {
                 sqk::Awaker<void> waker;
-                MAYBE_THROW(
-                    fi_send,
-                    ep_,
-                    buf.buf_,
-                    size,
-                    mr.desc(),
-                    dst ? dst.value() : 0,
-                    &waker
-                );
+                int rc;
+                for (;;) {
+                    rc = fi_send(
+                        ep_,
+                        buf.buf_,
+                        size,
+                        mr.desc(),
+                        dst ? dst.value() : 0,
+                        &waker
+                    );
+                    if (rc != -EAGAIN) {
+                        break;
+                    }
+                }
+                if (rc) {
+                    throw std::system_error(-rc, std::system_category());
+                }
                 co_await waker;
             }
 

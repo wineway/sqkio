@@ -23,10 +23,16 @@ run(Fabric& fabric,
     printf("run~~~\n");
     S_INFO("run!!!");
 
-    Endpoint ep(domain, info, eq, cq);
+    AddressVectorAttr av_attr {};
+    av_attr->type = info.get_domain_attr()->av_type;
+    av_attr->count = 1;
+    AddressVector av(domain, av_attr);
+    if (send_first)
+      av.insert(info.dst_addr());
+
+    Endpoint ep(domain, info, eq, cq, av);
     uint64_t cnt {};
 
-    Address dst_addr;
     if (send_first) {
         auto node = "127.0.0.1";
         auto flag = 0;
@@ -56,7 +62,7 @@ run(Fabric& fabric,
     for (;;) {
         if (send_first) {
             S_INFO("before send...");
-            co_await ep.send(buf, sizeof(keys), mr, dst_addr);
+            co_await ep.send(buf, sizeof(keys), mr);
             S_INFO("send() end");
             S_INFO("before recv {}/{}", keys.addr, keys.rkey);
             auto addr = co_await ep.recv(buf, sizeof(keys), mr);
@@ -83,17 +89,19 @@ int main(int argc, char* argv[]) {
         S_INFO("I'm client; {}", argc);
         send_first = 1;
     }
+    auto da_name = getenv("DA_NAME");
     sqk::scheduler = new sqk::SQKScheduler;
     keys keys;
     Info hint =
         Info()
-            .with_caps(FI_MSG | FI_RMA)
-            .with_ep_attr([](auto ea) { ea->type = FI_EP_MSG; })
-            .with_mode(FI_RX_CQ_DATA)
+            .with_caps(FI_MSG)
+            .with_ep_attr([](auto ea) { ea->type = FI_EP_RDM; })
+            .with_mode(FI_CONTEXT)
             .with_fabric_attr([](auto fa) { fa->prov_name = strdup("verbs"); })
-            .with_domain_attr([](auto da) {
-                da->mr_mode = FI_MR_LOCAL | FI_MR_VIRT_ADDR | FI_MR_ALLOCATED
-                    | FI_MR_PROV_KEY;
+            .with_domain_attr([&](auto da) {
+                da->name = strdup(da_name);
+                da->mr_mode = FI_MR_LOCAL | FI_MR_RAW | FI_MR_VIRT_ADDR
+                    | FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_ENDPOINT;
             });
 
     hint.print();
