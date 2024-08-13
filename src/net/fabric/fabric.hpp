@@ -12,6 +12,7 @@
 #include "rdma/fi_domain.h"
 #include "rdma/fi_endpoint.h"
 #include "rdma/fi_eq.h"
+#include "rdma/fi_rma.h"
 
 namespace sqk {
 namespace net {
@@ -37,10 +38,23 @@ namespace net {
         using Flags = uint64_t;
         using Action = uint64_t;
         using Event = uint32_t;
+        using OpaqueAddr = void*;
 
         template<typename T>
         concept HasFid = requires(T a) { a.get_fid(); };
 
+        struct IOVector {
+            char* buf_;
+            size_t size_;
+
+            IOVector(size_t size) : size_(size) {
+                buf_ = new char[size_];
+            }
+
+            ~IOVector() {
+                delete buf_;
+            }
+        };
         class CompletionQueueAttr {
             fi_cq_attr attr_;
             using Self = CompletionQueueAttr;
@@ -102,6 +116,15 @@ namespace net {
             DomainAttr(fi_domain_attr* attr) : attr_(attr) {}
 
             REDIRECT_INNER_PTR(fi_domain_attr, attr_);
+        };
+
+        class RxAttr {
+            fi_rx_attr* attr_;
+
+          public:
+            RxAttr(fi_rx_attr* attr) : attr_(attr) {}
+
+            REDIRECT_INNER_PTR(fi_rx_attr, attr_);
         };
 
         class EndpointAttr {
@@ -176,11 +199,11 @@ public:
                 rhs.info_ = nullptr;
             };
 
-            void* dst_addr() {
+            OpaqueAddr dst_addr() {
                 return info_->dest_addr;
             }
 
-            void* src_addr() {
+            OpaqueAddr src_addr() {
                 return info_->src_addr;
             }
             Info& operator=(const Info& info) = delete;
@@ -206,6 +229,11 @@ public:
 
             Self with_ep_attr(std::function<void(EndpointAttr)> fn) {
                 fn(EndpointAttr(info_->ep_attr));
+                return std::move(*this);
+            }
+
+            Self with_rx_attr(std::function<void(RxAttr)> fn) {
+                fn(RxAttr(info_->rx_attr));
                 return std::move(*this);
             }
 
@@ -296,9 +324,14 @@ public:
             REDIRECT_INNER_PTR(fi_eq_cm_entry, ent_);
         };
 
+        struct CompletionQueueErrEntry {
+            fi_cq_err_entry ent_;
+            REDIRECT_INNER(fi_cq_err_entry, ent_);
+        };
+
         class CompletionQueueMsgEntry {
-        Address addr_;
             fi_cq_msg_entry ent_;
+            Address addr_;
             friend class CompletionQueue;
 
           public:
@@ -398,20 +431,43 @@ public:
             HAS_FID_DTOR(CompletionQueue)
 
         int poll() {
-            CompletionQueueMsgEntry ent;
+            CompletionQueueMsgEntry ent {};
             int rc = fi_cq_readfrom(cq, &ent, 1, ent.addr_());
-            if (rc != -EAGAIN && rc < 0) {
-                S_WARN("fi_cq_readfrom: rc={}", rc);
-            } else if (rc == 1 && ent->flags & FI_RECV) {
+            if (rc == -EAGAIN) {
+                return 0;
+            }
+            if (rc == -FI_EAVAIL) {
+                CompletionQueueErrEntry err_ent {};
+                rc = fi_cq_readerr(cq, &err_ent.ent_, 0);
+                auto err_data = std::vector<char>(1024);
+                fi_cq_strerror(
+                    cq,
+                    err_ent->prov_errno,
+                    err_ent->err_data,
+                    err_data.data(),
+                    1024
+                );
+                auto err_string =
+                    std::string_view(err_data.begin(), err_data.end());
+                S_ERROR(
+                    "cq_poll error: {}, prov_errno: {}, prov_error: {}",
+                    err_ent->err,
+                    err_ent->prov_errno,
+                    err_string
+                );
+                memcpy(&ent, &err_ent, sizeof(ent));
+            }
+            if (rc == 1 && ent->flags & FI_RECV) {
+                S_DBUG("receive FI_RECV with addr: {}", fmt::ptr(ent.addr_()));
                 auto awaker = static_cast<Awaker<Address>*>(ent->op_context);
                 awaker->wake(ent.addr());
-            } else if (rc == 1 && ent->flags & FI_SEND) {
+            } else if (rc == 1 && ent->flags & (FI_SEND | FI_WRITE)) {
                 auto awaker = static_cast<Awaker<void>*>(ent->op_context);
                 awaker->wake();
             } else if (rc == 1) {
                 S_ERROR("unexpected event={}", ent->flags);
             } else {
-                assert(rc == -EAGAIN);
+                S_WARN("fi_cq_readfrom: rc={}", rc);
             }
             return rc;
         }
@@ -543,7 +599,7 @@ public:
             REDIRECT_INNER_PTR(fid_av, av_);
 
             AddressVector(Domain& domain, AddressVectorAttr& attr) {
-                fi_av_open(domain.domain_, attr, &av_, nullptr);
+                MAYBE_THROW(fi_av_open, domain.domain_, attr, &av_, nullptr);
             }
 
             Address insert(void* opaque_addr) {
@@ -599,6 +655,10 @@ public:
                 co_await stop_waker_;
             }
 
+            void get_name(IOVector& iov) {
+                MAYBE_THROW(fi_getname, get_fid(), iov.buf_, &iov.size_);
+            }
+
             sqk::Task<void> accept() {
                 MAYBE_THROW(fi_accept, ep_, nullptr, 0);
                 Awaker<void> awaker;
@@ -646,7 +706,42 @@ public:
             MAYBE_THROW(fi_recv, ep_, buf.buf_, size, mr.desc(), 0, &waker);
             Address addr = co_await waker;
             co_return addr;
+        }
 
+        sqk::Task<void> write(
+            MemoryBuffer& buf,
+            size_t size,
+            MemoryRegion& mr,
+            int addr,
+            uint64_t key,
+            Address dst
+        ) {
+            sqk::Awaker<Address> waker;
+            MAYBE_THROW(
+                fi_write,
+                ep_,
+                buf.buf_,
+                size,
+                mr.desc(),
+                dst,
+                addr,
+                key,
+                &waker
+            );
+            co_await waker;
+        }
+
+        sqk::Task<void> read(
+            MemoryBuffer& buf,
+            size_t size,
+            MemoryRegion& mr,
+            int addr,
+            uint64_t key,
+            Address src
+        ) {
+            sqk::Awaker<void> waker;
+            fi_read(ep_, buf.buf_, size, mr.desc(), addr, addr, key, &waker);
+            co_await waker;
         }
 
             void close() {
