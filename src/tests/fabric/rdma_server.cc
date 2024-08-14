@@ -20,7 +20,6 @@ run(Fabric& fabric,
     MemoryBuffer& buf,
     MemoryRegion& mr,
     Info& hint) {
-    printf("run~~~\n");
     S_INFO("run!!!");
 
     AddressVectorAttr av_attr {};
@@ -31,7 +30,6 @@ run(Fabric& fabric,
     if (send_first)
         srv_addr = av.insert(info.dst_addr());
 
-    Endpoint ep(domain, info, eq, cq, av);
     uint64_t cnt {};
 
     if (send_first) {
@@ -60,38 +58,44 @@ run(Fabric& fabric,
         co_return;
     }(cq));
 
+    Endpoint* ep;
+    if (!send_first)
+        ep = new Endpoint(domain, info, eq, cq, av);
     for (;;) {
         if (send_first) {
+            auto endpoint = Endpoint(domain, info, eq, cq, av);
+            ep = &endpoint;
             IOVector iov(1024);
-            ep.get_name(iov);
+            ep->get_name(iov);
             memcpy(buf.buf_, iov.buf_, iov.size_);
             S_INFO("before send...{}/{}", keys.rkey, keys.addr);
-            co_await ep.send(buf, iov.size_, mr);
+            co_await ep->send(buf, iov.size_, mr);
             S_INFO("send() end");
             S_INFO("before recv {}/{}", keys.addr, keys.rkey);
-            auto addr = co_await ep.recv(buf, sizeof(keys), mr);
+            auto addr = co_await ep->recv(buf, sizeof(keys), mr);
             memcpy(&keys, buf.buf_, sizeof(keys));
             S_INFO("recv {}/{} from {}", keys.addr, keys.rkey, *addr());
             co_await ep
-                .write(buf, buf.capicity_, mr, keys.addr, keys.rkey, srv_addr);
-
+                ->write(buf, buf.capicity_, mr, keys.addr, keys.rkey, srv_addr);
+            S_INFO("write() end");
+            S_INFO("end conn");
         } else {
             IOVector iov(1024);
             S_INFO("before recv {}/{}", keys.addr, keys.rkey);
-            auto addr = co_await ep.recv(buf, 1024, mr);
+            auto addr = co_await ep->recv(buf, 1024, mr);
             memcpy(iov.buf_, buf.buf_, iov.size_);
             auto address = av.insert(iov.buf_);
             keys.rkey = mr.key();
             keys.addr = reinterpret_cast<uint64_t>(buf.buf_);
             memcpy(buf.buf_, &keys, sizeof(keys));
             S_INFO("before send {}/{}", keys.addr, keys.rkey);
-            co_await ep.send(buf, sizeof(keys), mr, address);
+            co_await ep->send(buf, sizeof(keys), mr, address);
             S_INFO("send() end");
         }
-        co_await ep.wait_disconn();
-
         S_INFO("evt, cnt: {}", cnt);
     }
+    if (!send_first)
+        delete ep;
 }
 
 int main(int argc, char* argv[]) {
@@ -110,7 +114,9 @@ int main(int argc, char* argv[]) {
             // .with_mode(FI_CONTEXT)
             .with_fabric_attr([](auto fa) { fa->prov_name = strdup("verbs"); })
             .with_domain_attr([&](auto da) {
-                da->name = strdup(da_name);
+                if (da_name) {
+                    da->name = strdup(da_name);
+                }
                 da->mr_mode = FI_MR_LOCAL | FI_MR_RAW | FI_MR_VIRT_ADDR
                     | FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_ENDPOINT;
             });
@@ -123,7 +129,7 @@ int main(int argc, char* argv[]) {
 
     if (send_first) {
         flag = 0;
-        node = "127.0.0.1";
+        node = argv[1];
     }
 
     auto info = Info::get_info(node, port, flag, hint);

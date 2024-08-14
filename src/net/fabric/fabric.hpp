@@ -52,7 +52,7 @@ namespace net {
             }
 
             ~IOVector() {
-                delete buf_;
+                delete [] buf_;
             }
         };
         class CompletionQueueAttr {
@@ -699,50 +699,59 @@ public:
                 co_await waker;
             }
 
-        sqk::Task<Address>
-        recv(MemoryBuffer& buf, size_t size, MemoryRegion& mr) {
-        sqk::Awaker<Address> waker;
-            S_DBUG("fi_recv: {}", fmt::ptr(&waker));
-            MAYBE_THROW(fi_recv, ep_, buf.buf_, size, mr.desc(), 0, &waker);
-            Address addr = co_await waker;
-            co_return addr;
-        }
+            sqk::Task<Address>
+            recv(MemoryBuffer& buf, size_t size, MemoryRegion& mr) {
+                sqk::Awaker<Address> waker;
+                S_DBUG("fi_recv: {}", fmt::ptr(&waker));
+                MAYBE_THROW(fi_recv, ep_, buf.buf_, size, mr.desc(), 0, &waker);
+                Address addr = co_await waker;
+                co_return addr;
+            }
 
-        sqk::Task<void> write(
-            MemoryBuffer& buf,
-            size_t size,
-            MemoryRegion& mr,
-            int addr,
-            uint64_t key,
-            Address dst
-        ) {
-            sqk::Awaker<Address> waker;
-            MAYBE_THROW(
-                fi_write,
-                ep_,
-                buf.buf_,
-                size,
-                mr.desc(),
-                dst,
-                addr,
-                key,
-                &waker
-            );
-            co_await waker;
-        }
+            sqk::Task<void> write(
+                MemoryBuffer& buf,
+                size_t size,
+                MemoryRegion& mr,
+                uint64_t addr,
+                uint64_t key,
+                Address dst
+            ) {
+                sqk::Awaker<Address> waker;
+                MAYBE_THROW(
+                    fi_write,
+                    ep_,
+                    buf.buf_,
+                    size,
+                    mr.desc(),
+                    dst,
+                    addr,
+                    key,
+                    &waker
+                );
+                co_await waker;
+            }
 
-        sqk::Task<void> read(
-            MemoryBuffer& buf,
-            size_t size,
-            MemoryRegion& mr,
-            int addr,
-            uint64_t key,
-            Address src
-        ) {
-            sqk::Awaker<void> waker;
-            fi_read(ep_, buf.buf_, size, mr.desc(), addr, addr, key, &waker);
-            co_await waker;
-        }
+            sqk::Task<void> read(
+                MemoryBuffer& buf,
+                size_t size,
+                MemoryRegion& mr,
+                int addr,
+                uint64_t key,
+                Address src
+            ) {
+                sqk::Awaker<void> waker;
+                fi_read(
+                    ep_,
+                    buf.buf_,
+                    size,
+                    mr.desc(),
+                    addr,
+                    addr,
+                    key,
+                    &waker
+                );
+                co_await waker;
+            }
 
             void close() {
                 MAYBE_THROW(fi_close, &ep_->fid);
@@ -776,7 +785,7 @@ public:
                     auto& awaker =
                         static_cast<PassiveEndpoint*>(iter->second)->awaker_;
                     S_DBUG(
-                        "wakeup : {}, fid={}",
+                        "FI_CONNREQ wakeup : {}, fid={}",
                         fmt::ptr(&awaker),
                         fmt::ptr(ent->info)
                     );
@@ -791,7 +800,7 @@ public:
                     auto& awaker =
                         static_cast<Endpoint*>(iter->second)->stop_waker_;
                     S_DBUG(
-                        "wakeup : {}, fid={}",
+                        "FI_SHUTDOWN wakeup : {}, fid={}",
                         fmt::ptr(&awaker),
                         fmt::ptr(ent->info)
                     );
