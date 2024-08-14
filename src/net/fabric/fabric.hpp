@@ -735,7 +735,7 @@ public:
                 MemoryBuffer& buf,
                 size_t size,
                 MemoryRegion& mr,
-                int addr,
+                uint64_t addr,
                 uint64_t key,
                 Address src
             ) {

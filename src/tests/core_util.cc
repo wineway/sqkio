@@ -39,5 +39,6 @@ sqk::Task<int> g() {
 
 int main() {
     sqk::scheduler = new sqk::SQKScheduler;
-    sqk::scheduler->run(g());
+    sqk::scheduler->enqueue(g());
+    sqk::scheduler->run();
 }

@@ -161,6 +161,7 @@ int main(int argc, char* argv[]) {
     S_INFO("mr key: {}, addr: {}", keys.rkey, keys.addr);
 
     S_INFO("wawwawawa");
-    sqk::scheduler->run(run(fabric, info, eq, cq, domain, keys, buf, mr, hint));
+    sqk::scheduler->enqueue(run(fabric, info, eq, cq, domain, keys, buf, mr, hint));
+    sqk::scheduler->run();
     return 0;
 }

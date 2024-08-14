@@ -42,9 +42,7 @@ struct SQKScheduler {
         return 0;
     }
 
-    template<typename T>
-    [[noreturn]] int run(Task<T> handle) {
-        enqueue(handle);
+    [[noreturn]] int run() {
         for (;;) {
             while (!queue_.empty()) {
                 auto handle = queue_.front();

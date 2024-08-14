@@ -104,6 +104,7 @@ int main() {
         co_return;
     }(cq));
 
-    sqk::scheduler->run(run(fabric, info, eq, cq, domain, keys, buf, mr));
+    sqk::scheduler->enqueue(run(fabric, info, eq, cq, domain, keys, buf, mr));
+    sqk::scheduler->run();
     return 0;
 }
