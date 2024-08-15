@@ -1,13 +1,13 @@
 include(FetchContent)
-
-find_program(MAKE_EXE NAMES gmake nmake make)
+include(FindMake)
+find_make("MAKE_EXECUTABLE" "make_cmd")
 include(ExternalProject)
 FetchContent_Declare(FABRIC
 GIT_REPOSITORY https://github.com/ofiwg/libfabric.git
 GIT_TAG main)
-FetchContent_MakeAvailable(FABRIC)
 
 macro(buildLibfabirc)
+    FetchContent_MakeAvailable(FABRIC)
     if (CMAKE_BUILD_TYPE MATCHES Debug)
       set(ENABLE_DEBUG "--enable-debug")
       else()

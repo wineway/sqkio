@@ -1,7 +1,6 @@
-project(sched-core)
-
 add_subdirectory(net)
 add_subdirectory(core)
+add_subdirectory(io)
 if(BUILD_TESTING)
 	add_subdirectory(tests)
 endif()

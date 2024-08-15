@@ -8,10 +8,11 @@ set(WITH_NET_FABRIC ON)
 set(WITH_SPDLOG ON)
 set(INSTALL_SQKIO ON)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(FetchContent)
 include(FindPkgConfig)
 include(GNUInstallDirs)
-include(cmake/buildLibfabric.cmake)
+include(buildLibfabric)
 include(CTest)
 
 if (WITH_SPDLOG)
