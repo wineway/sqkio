@@ -1,3 +1,4 @@
 libaio-dev
 libnuma-dev
 uuid-dev
+meson
