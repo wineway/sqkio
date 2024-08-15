@@ -2,3 +2,4 @@ libaio-dev
 libnuma-dev
 uuid-dev
 meson
+python3-pyelftools
