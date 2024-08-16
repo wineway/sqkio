@@ -4,7 +4,7 @@ project(sqkio VERSION 0.0.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(BUILD_TESTING ON)
-set(WITH_NET_FABRIC ON)
+set(WITH_NET_FABRIC OFF)
 set(WITH_SPDLOG ON)
 set(INSTALL_SQKIO ON)
 set(WITH_IO_SPDK ON)
@@ -26,12 +26,9 @@ if (WITH_SPDLOG)
   add_compile_definitions(HAS_SPDLOG)
 endif()
 
-pkg_check_modules (FABRIC libfabric)
-
-if (NOT FABRIC_FOUND)
-  buildLibfabirc()
+if(APPLE)
+  set(WITH_IO_SPDK OFF)
 endif()
-
 add_subdirectory(src)
 
 if (INSTALL_SQKIO)
