@@ -2,12 +2,19 @@
 #define SQK_CORE_HPP
 
 #include <coroutine>
-#include <iostream>
 #include <list>
 
 #include "log.hpp"
 
 namespace sqk {
+
+
+#ifndef likely
+#define likely(x)	__builtin_expect((x), 1)
+#endif
+#ifndef unlikely
+#define unlikely(x)	__builtin_expect((x), 0)
+#endif
 
 template<typename T>
 struct SuspendAlways;
@@ -27,6 +34,7 @@ struct Task: std::coroutine_handle<Promise<T>> {
 };
 
 struct SQKScheduler {
+    alignas(SQK_CACHE_LINESIZE) bool stopped {};
     std::list<std::coroutine_handle<>> queue_;
 
   public:
@@ -42,12 +50,18 @@ struct SQKScheduler {
         return 0;
     }
 
-    [[noreturn]] int run() {
+    void stop() {
+        stopped = 1;
+    }
+    int run() {
         for (;;) {
-            while (!queue_.empty()) {
+            if (likely(!queue_.empty())) {
                 auto handle = queue_.front();
-                handle.resume();
                 queue_.pop_front();
+                handle.resume();
+                if (unlikely(stopped)) {
+                    return 0;
+                }
             }
         }
     }
@@ -63,8 +77,7 @@ struct Awaker_Base {
     Awaker_Base(Awaker_Base&) = delete;
     Awaker_Base& operator=(Awaker_Base&) = delete;
 
-    bool await_ready() {
-        S_DBUG("await_ready: {}", fmt::ptr(this));
+    constexpr bool await_ready() const noexcept {
         return false;
     }
 
@@ -124,6 +137,49 @@ struct Awaker<void>: Awaker_Base {
             );
             scheduler->enqueue(handle_);
         }
+    }
+};
+
+struct CheckableAwaker_Base {
+    bool is_awaked() const noexcept {
+        return awaked;
+    }
+
+  protected:
+    bool awaked {};
+};
+
+template<typename T>
+struct CheckableAwaker: Awaker<T>, CheckableAwaker_Base {
+    bool await_ready() const noexcept {
+        return awaked;
+    }
+
+    void wake(T&& ret) {
+        Awaker<T>::wake(std::move(ret));
+        awaked = true;
+    }
+
+    void await_suspend(std::coroutine_handle<> handle) noexcept {
+        Awaker<T>::await_suspend(handle);
+        awaked = false;
+    }
+};
+
+template<>
+struct CheckableAwaker<void>: Awaker<void>, CheckableAwaker_Base {
+    bool await_ready() const noexcept {
+        return awaked;
+    }
+
+    void wake() {
+        Awaker<void>::wake();
+        awaked = true;
+    }
+
+    void await_suspend(std::coroutine_handle<> handle) noexcept {
+        Awaker<void>::await_suspend(handle);
+        awaked = false;
     }
 };
 
@@ -225,7 +281,6 @@ struct PromiseBase {
 template<typename T>
 struct Promise: PromiseBase<T, Promise<T>> {
     void return_value(T&& ret) {
-        std::cout << "return_value" << std::endl;
         this->result_.val_ = std::move(ret);
         this->resume_caller();
         S_DBUG("return_value quit {}", this->get_return_object().address());

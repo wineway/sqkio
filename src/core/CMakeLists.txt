@@ -21,6 +21,11 @@ target_include_directories(${PROJECT_NAME}
   )
 endif()
 
+execute_process(COMMAND getconf LEVEL1_DCACHE_LINESIZE
+OUTPUT_VARIABLE CACHE_LINESIZE
+OUTPUT_STRIP_TRAILING_WHITESPACE)
+target_compile_definitions(${PROJECT_NAME} INTERFACE SQK_CACHE_LINESIZE=${CACHE_LINESIZE})
+
 if (INSTALL_SQKIO)
 set(test_dir /tmp)
   install(TARGETS ${PROJECT_NAME}

@@ -1,4 +1,5 @@
 #include "core.hpp"
+#include <iostream>
 
 using double_t = double;
 
@@ -38,6 +39,7 @@ sqk::Task<int> g() {
 }
 
 int main() {
+    S_LOGGER_SETUP;
     sqk::scheduler = new sqk::SQKScheduler;
     sqk::scheduler->enqueue(g());
     sqk::scheduler->run();
