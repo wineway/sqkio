@@ -17,6 +17,7 @@ if (INSTALL_SQKIO)
   install(TARGETS ${PROJECT_NAME}
   RUNTIME DESTINATION ${SQKIO_INSTALL_BINDIR})
 endif()
+add_subdirectory(common)
 if (WITH_NET_FABRIC)
 add_subdirectory(fabric)
 endif()

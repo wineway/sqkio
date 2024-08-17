@@ -12,7 +12,7 @@
     #define S_DBUG(...) SPDLOG_DEBUG(__VA_ARGS__)
     #define S_WARN(...) SPDLOG_WARN(__VA_ARGS__)
     #define S_ERROR(...) SPDLOG_ERROR(__VA_ARGS__)
-    #define S_LOGGER_SETUP spdlog::cfg::load_env_levels();
+    #define S_LOGGER_SETUP spdlog::cfg::load_env_levels()
 #else
     #define S_INFO(...)
     #define S_DBUG(...)
