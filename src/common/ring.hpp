@@ -248,7 +248,7 @@ struct Ring {
             }
             new_head = old_head + n;
             if constexpr (prod_sync_type == RingSyncType::SQK_RING_SYNC_MT) {
-                success = std::atomic_compare_exchange_weak(
+                success = std::atomic_compare_exchange_strong(
                     reinterpret_cast<volatile std::atomic<uint32_t>*>(
                         &this->prod_.head_
                     ),
