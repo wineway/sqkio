@@ -62,7 +62,7 @@ MaxEmptyLinesToKeep: 1
 NamespaceIndentation: Inner
 PointerAlignment: Left
 ReferenceAlignment: Left              # New in v13. int &name  ==>  int& name
-ReflowComments: false
+ReflowComments: true
 SeparateDefinitionBlocks: Always      # New in v14.
 SortIncludes: true
 SortUsingDeclarations: true
