@@ -26,31 +26,34 @@ struct Task: std::coroutine_handle<Promise<T>> {
     using promise_type = Promise<T>;
 };
 
+using sqk::common::MpscRing;
+using sqk::common::RingGuard;
+
 struct SQKScheduler {
     alignas(SQK_CACHE_LINESIZE) bool stopped {};
-    std::list<std::coroutine_handle<>> queue_;
+    RingGuard<MpscRing<std::coroutine_handle<>>> queue_;
 
   public:
     template<typename T>
     int enqueue(Task<T> handle) {
-        queue_.push_back(handle);
+        queue_->enqueue(handle);
         return 0;
     }
 
     template<typename T>
     int enqueue(T handle) {
-        queue_.push_back(handle);
+        queue_->enqueue(handle);
         return 0;
     }
 
     void stop() {
         stopped = 1;
     }
+
     int run() {
+        std::coroutine_handle<> handle;
         for (;;) {
-            if (likely(!queue_.empty())) {
-                auto handle = queue_.front();
-                queue_.pop_front();
+            if (likely(queue_->dequeue(handle))) {
                 handle.resume();
                 if (unlikely(stopped)) {
                     return 0;

@@ -1,5 +1,7 @@
 #include "ring.hpp"
 
+using namespace sqk::common;
+
 int main(int argc, char* argv[]) {
     S_LOGGER_SETUP;
     {

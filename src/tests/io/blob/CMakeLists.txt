@@ -13,5 +13,3 @@ foreach(X IN ITEMS blob-test)
   endif()
 endforeach()
 
-
-

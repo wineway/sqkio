@@ -5,6 +5,7 @@
 
 #include <cstdint>
 
+#include "ring_generic_allocator.hpp"
 #include "log.hpp"
 
 static_assert(sizeof(std::atomic<uint32_t>) == sizeof(uint32_t), "");
@@ -113,6 +114,26 @@ static inline uint32_t sqk_align32pow2(uint32_t x) {
     return x + 1;
 }
 
+inline void sqk_wait_until_equal_32(
+    volatile uint32_t* addr,
+    uint32_t expected,
+    std::memory_order memorder
+) {
+    assert(
+        memorder == std::memory_order_acquire
+        || memorder == std::memory_order_relaxed
+    );
+
+    while (std::atomic_load_explicit(
+               (volatile std::atomic<uint32_t>*)addr,
+               memorder
+           )
+           != expected)
+        sqk_pause();
+}
+
+namespace sqk::common {
+
 struct MemZone {
     uint8_t* addr_;
     ssize_t size_;
@@ -152,6 +173,8 @@ union RingHtsPosPlain {
     } pos;
 };
 
+static_assert(sizeof(RingHtsPosPlain) == sizeof(RingHtsPos), "");
+
 union RingHeadTail {
     struct {
         volatile uint32_t head_;
@@ -180,7 +203,7 @@ template<
     RingSyncType cons_sync_type = RingSyncType::SQK_RING_SYNC_ST,
     bool transactional_prod = 0,
     bool transactional_cons = 0,
-    typename Allocator = std::allocator<uint8_t>>
+    typename Allocator = Allocator<uint8_t>>
     requires(sizeof(T) % 4 == 0) && std::is_trivially_copyable_v<T>
 struct Ring {
   private:
@@ -318,10 +341,10 @@ struct Ring {
         do {
             n = num;
             /*
-             *       * wait for tail to be equal to head,
-             *               * make sure that we read prod head/tail *before*
-             *                       * reading cons tail.
-             *                               */
+             *  wait for tail to be equal to head,
+             *  make sure that we read prod head/tail *before*
+             *  reading cons tail.
+             */
             this->hts_head_wait(this->prod_.ht, op);
             /*
              *  The subtraction is done between two unsigned 32bits value
@@ -496,19 +519,20 @@ struct Ring {
         uint32_t single,
         bool enqueue
     ) {
-        if (enqueue)
-            sqk_smp_wmb();
-        else
-            sqk_smp_rmb();
-        /*
-         * If there are other enqueues/dequeues in progress that preceded us,
-         * we need to wait for them to complete
-         */
-        if (!single)
-            while (unlikely(this->prod_.tail_ != old_val))
-                sqk_pause();
+        SQK_SET_USED(enqueue);
 
-        ht.tail_ = new_val;
+        if (!single)
+            sqk_wait_until_equal_32(
+                &ht.tail_,
+                old_val,
+                std::memory_order_relaxed
+            );
+
+        std::atomic_store_explicit(
+            reinterpret_cast<volatile std::atomic<uint32_t>*>(&ht.tail_),
+            new_val,
+            std::memory_order_release
+        );
     }
 
     template<RingSyncType sync_type = cons_sync_type>
@@ -622,12 +646,14 @@ struct Ring {
                 sqk_smp_rmb();
                 success = 1;
             } else {
-                success = std::atomic_compare_exchange_weak(
+                success = std::atomic_compare_exchange_strong_explicit(
                     reinterpret_cast<volatile std::atomic<uint32_t>*>(
                         &this->cons_.head_
                     ),
                     &old_head,
-                    new_head
+                    new_head,
+                    std::memory_order_relaxed,
+                    std::memory_order_relaxed
                 );
             }
         } while (unlikely(success == 0));
@@ -804,7 +830,7 @@ struct Ring {
                 return 0;
             }
             this->enqueue_elements(prod_head, &entry, n);
-            this->update_tail(this->prod_, prod_head, prod_next, 0, 1);
+            this->update_tail(this->prod_, prod_head, prod_next, prod_sync_type == RingSyncType::SQK_RING_SYNC_ST, 1);
             return n;
         } else if constexpr (prod_sync_type
                              == RingSyncType::SQK_RING_SYNC_MT_HTS) {
@@ -833,7 +859,7 @@ struct Ring {
                 return 0;
             }
             this->dequeue_elements(cons_head, &entry, n);
-            this->update_tail(this->cons_, cons_head, cons_next, 1, 0);
+            this->update_tail(this->cons_, cons_head, cons_next, cons_sync_type == RingSyncType::SQK_RING_SYNC_ST, 0);
             return n;
         } else if constexpr (cons_sync_type
                              == RingSyncType::SQK_RING_SYNC_MT_HTS) {
@@ -855,4 +881,23 @@ struct Ring {
     }
 };
 
+template<typename T>
+using MpscRing = Ring<T, RingSyncType::SQK_RING_SYNC_MT, RingSyncType::SQK_RING_SYNC_ST>;
+
+template<typename RingType>
+struct RingGuard {
+    RingType* ring_;
+
+    RingGuard(uint32_t cnt = 1024) : ring_(RingType::of(cnt)) {}
+
+    ~RingGuard() {
+        RingType::free(ring_);
+    }
+
+    RingType* operator->() {
+        return ring_;
+    }
+};
+
+} // namespace sqk::common
 #endif // !SQK_COMMON_HPP_

@@ -34,6 +34,7 @@ const char* dpdk_cli_override_opts =
     "--no-telemetry";
 
 int main(int argc, char* argv[]) {
+    S_LOGGER_SETUP;
     sqk::scheduler = new sqk::SQKScheduler;
     BlobEnv env;
     BlobOptions opts;
