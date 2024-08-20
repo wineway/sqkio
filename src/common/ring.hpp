@@ -5,8 +5,8 @@
 
 #include <cstdint>
 
-#include "ring_generic_allocator.hpp"
 #include "log.hpp"
+#include "ring_generic_allocator.hpp"
 
 static_assert(sizeof(std::atomic<uint32_t>) == sizeof(uint32_t), "");
 static_assert(sizeof(std::atomic<uint64_t>) == sizeof(uint64_t), "");
@@ -244,20 +244,38 @@ struct Ring {
     ) {
         bool success {};
         uint32_t max = n;
+        uint32_t cons_tail;
+        const uint32_t capacity = this->capacity;
+
+        old_head = std::atomic_load_explicit(
+            reinterpret_cast<volatile std::atomic<uint32_t>*>(&this->prod_.head_
+            ),
+            std::memory_order_relaxed
+        );
         do {
+            /* Reset n to the initial burst count */
             n = max;
-            old_head = this->prod_.head_;
-            /* add rmb barrier to avoid load/load reorder in weak
-             * memory model. It is noop on x86
+
+            /* Ensure the head is read before tail */
+            std::atomic_thread_fence(std::memory_order_acquire);
+
+            /* load-acquire synchronize with store-release of ht->tail
+             * in update_tail.
              */
-            sqk_smp_rmb();
+            cons_tail = std::atomic_load_explicit(
+                reinterpret_cast<volatile std::atomic<uint32_t>*>(
+                    &this->cons_.tail_
+                ),
+                std::memory_order_acquire
+            );
+
             /*
              *  The subtraction is done between two unsigned 32bits value
              * (the result is always modulo 32 bits even if we have
              * *old_head > cons_tail). So 'free_entries' is always between 0
              * and capacity (which is < size).
              */
-            free_entries = (this->capacity + this->cons_.tail_ - old_head);
+            free_entries = (capacity + cons_tail - old_head);
             /* check that we have enough room in ring */
             if (unlikely(n > free_entries)) {
                 if constexpr (transactional_prod) {
@@ -266,17 +284,21 @@ struct Ring {
                     n = free_entries;
                 }
             }
+
             if (n == 0) {
                 return 0;
             }
+
             new_head = old_head + n;
             if constexpr (prod_sync_type == RingSyncType::SQK_RING_SYNC_MT) {
-                success = std::atomic_compare_exchange_strong(
+                success = std::atomic_compare_exchange_strong_explicit(
                     reinterpret_cast<volatile std::atomic<uint32_t>*>(
                         &this->prod_.head_
                     ),
                     &old_head,
-                    new_head
+                    new_head,
+                    std::memory_order_relaxed,
+                    std::memory_order_relaxed
                 );
             } else {
                 this->prod_.head_ = new_head, success = 1;
@@ -607,26 +629,40 @@ struct Ring {
         uint32_t& entries
     ) {
         unsigned int max = n;
+        uint32_t prod_tail;
         int success;
 
         /* move cons.head atomically */
+        old_head = std::atomic_load_explicit(
+            reinterpret_cast<volatile std::atomic<uint32_t>*>(&this->cons_.head_
+            ),
+            std::memory_order_relaxed
+        );
         do {
             /* Restore n as it may change every loop */
             n = max;
 
             old_head = this->cons_.head_;
 
-            /* add rmb barrier to avoid load/load reorder in weak
-             * memory model. It is noop on x86
+            /* Ensure the head is read before tail */
+            std::atomic_thread_fence(std::memory_order_acquire);
+
+            /* this load-acquire synchronize with store-release of ht->tail
+             * in update_tail.
              */
-            sqk_smp_rmb();
+            prod_tail = std::atomic_load_explicit(
+                reinterpret_cast<volatile std::atomic<uint32_t>*>(
+                    &this->prod_.tail_
+                ),
+                std::memory_order_acquire
+            );
 
             /* The subtraction is done between two unsigned 32bits value
              * (the result is always modulo 32 bits even if we have
              * cons_head > prod_tail). So 'entries' is always between 0
              * and size(ring)-1.
              */
-            entries = (this->prod_.tail_ - old_head);
+            entries = (prod_tail - old_head);
 
             /* Set the actual entries for dequeue */
             if (n > entries) {
@@ -643,7 +679,6 @@ struct Ring {
             new_head = old_head + n;
             if constexpr (cons_sync_type == RingSyncType::SQK_RING_SYNC_ST) {
                 this->cons_.head_ = new_head;
-                sqk_smp_rmb();
                 success = 1;
             } else {
                 success = std::atomic_compare_exchange_strong_explicit(
@@ -830,7 +865,13 @@ struct Ring {
                 return 0;
             }
             this->enqueue_elements(prod_head, &entry, n);
-            this->update_tail(this->prod_, prod_head, prod_next, prod_sync_type == RingSyncType::SQK_RING_SYNC_ST, 1);
+            this->update_tail(
+                this->prod_,
+                prod_head,
+                prod_next,
+                prod_sync_type == RingSyncType::SQK_RING_SYNC_ST,
+                1
+            );
             return n;
         } else if constexpr (prod_sync_type
                              == RingSyncType::SQK_RING_SYNC_MT_HTS) {
@@ -859,7 +900,13 @@ struct Ring {
                 return 0;
             }
             this->dequeue_elements(cons_head, &entry, n);
-            this->update_tail(this->cons_, cons_head, cons_next, cons_sync_type == RingSyncType::SQK_RING_SYNC_ST, 0);
+            this->update_tail(
+                this->cons_,
+                cons_head,
+                cons_next,
+                cons_sync_type == RingSyncType::SQK_RING_SYNC_ST,
+                0
+            );
             return n;
         } else if constexpr (cons_sync_type
                              == RingSyncType::SQK_RING_SYNC_MT_HTS) {
@@ -882,7 +929,8 @@ struct Ring {
 };
 
 template<typename T>
-using MpscRing = Ring<T, RingSyncType::SQK_RING_SYNC_MT, RingSyncType::SQK_RING_SYNC_ST>;
+using MpscRing =
+    Ring<T, RingSyncType::SQK_RING_SYNC_MT, RingSyncType::SQK_RING_SYNC_ST>;
 
 template<typename RingType>
 struct RingGuard {

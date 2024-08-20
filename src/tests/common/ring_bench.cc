@@ -17,6 +17,7 @@ int main(int argc, char* argv[]) {
                 guard->enqueue(1);
                 int i;
                 guard->dequeue(i);
+                ankerl::nanobench::doNotOptimizeAway(i);
             });
     }
     {
@@ -31,6 +32,7 @@ int main(int argc, char* argv[]) {
                 guard->enqueue(1);
                 int i;
                 guard->dequeue(i);
+                ankerl::nanobench::doNotOptimizeAway(i);
             });
     }
     {
@@ -45,6 +47,7 @@ int main(int argc, char* argv[]) {
                 guard->enqueue(1);
                 int i;
                 guard->dequeue(i);
+                ankerl::nanobench::doNotOptimizeAway(i);
             });
     }
     {
@@ -55,6 +58,7 @@ int main(int argc, char* argv[]) {
                 deq.push_back(1);
                 int i = deq.front();
                 deq.pop_front();
+                ankerl::nanobench::doNotOptimizeAway(i);
             });
     }
     {
@@ -65,6 +69,7 @@ int main(int argc, char* argv[]) {
                 deq.push_back(1);
                 int i = deq.front();
                 deq.pop_front();
+                ankerl::nanobench::doNotOptimizeAway(i);
             });
     }
     {
@@ -75,6 +80,7 @@ int main(int argc, char* argv[]) {
                 guard->enqueue(1);
                 uint64_t i;
                 guard->dequeue(i);
+                ankerl::nanobench::doNotOptimizeAway(i);
             });
     }
     {
@@ -89,6 +95,7 @@ int main(int argc, char* argv[]) {
                 guard->enqueue(1);
                 uint64_t i;
                 guard->dequeue(i);
+                ankerl::nanobench::doNotOptimizeAway(i);
             });
     }
     {
@@ -103,6 +110,7 @@ int main(int argc, char* argv[]) {
                 guard->enqueue(1);
                 uint64_t i;
                 guard->dequeue(i);
+                ankerl::nanobench::doNotOptimizeAway(i);
             });
     }
     {
@@ -113,6 +121,7 @@ int main(int argc, char* argv[]) {
                 deq.push_back(1);
                 uint64_t i = deq.front();
                 deq.pop_front();
+                ankerl::nanobench::doNotOptimizeAway(i);
             });
     }
     {
@@ -123,6 +132,7 @@ int main(int argc, char* argv[]) {
                 deq.push_back(1);
                 uint64_t i = deq.front();
                 deq.pop_front();
+                ankerl::nanobench::doNotOptimizeAway(i);
             });
     }
 
