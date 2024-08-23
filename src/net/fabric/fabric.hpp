@@ -1,10 +1,12 @@
+#ifndef SQK_NET_FABRIC_FABRIC_HPP_
+#define SQK_NET_FABRIC_FABRIC_HPP_
+
 #include <cstring>
 #include <functional>
 #include <new>
 #include <optional>
 #include <string>
 #include <system_error>
-#include <unordered_set>
 
 #include "core.hpp"
 #include "rdma/fabric.h"
@@ -52,9 +54,10 @@ namespace net {
             }
 
             ~IOVector() {
-                delete [] buf_;
+                delete[] buf_;
             }
         };
+
         class CompletionQueueAttr {
             fi_cq_attr attr_;
             using Self = CompletionQueueAttr;
@@ -142,6 +145,7 @@ namespace net {
 
           public:
             REDIRECT_INNER_PTR(fi_fabric_attr, attr_);
+
             FabricAttr(fi_fabric_attr* attr) : attr_(attr) {}
         };
 
@@ -152,16 +156,18 @@ namespace net {
             REDIRECT_INNER(fi_av_attr, attr_);
         };
 
-class Address {
-    fi_addr_t addr_;
-public:
-    operator fi_addr_t () {
-        return addr_;
-    }
-    fi_addr_t* operator()() {
-        return &addr_;
-    }
-};
+        class Address {
+            fi_addr_t addr_;
+
+          public:
+            operator fi_addr_t() {
+                return addr_;
+            }
+
+            fi_addr_t* operator()() {
+                return &addr_;
+            }
+        };
 
         class Info {
             fi_info* info_;
@@ -182,11 +188,12 @@ public:
                 if (!info_) {
                     throw std::bad_alloc();
                 }
-            };
+            }
 
             ~Info() {
-                if (info_)
+                if (info_) {
                     fi_freeinfo(info_);
+                }
             }
 
             Info(Info&) = delete;
@@ -197,7 +204,7 @@ public:
                 }
                 info_ = rhs.info_;
                 rhs.info_ = nullptr;
-            };
+            }
 
             OpaqueAddr dst_addr() {
                 return info_->dest_addr;
@@ -206,6 +213,7 @@ public:
             OpaqueAddr src_addr() {
                 return info_->src_addr;
             }
+
             Info& operator=(const Info& info) = delete;
 
             Info&& operator=(Info&& rhs) {
@@ -299,7 +307,7 @@ public:
 
             Fabric(FabricAttr attr) {
                 MAYBE_THROW(fi_fabric, attr.attr_, &fabric_, nullptr);
-            };
+            }
             HAS_FID_DTOR(Fabric)
         };
 
@@ -335,7 +343,10 @@ public:
             friend class CompletionQueue;
 
           public:
-        Address addr() { return addr_; }
+            Address addr() {
+                return addr_;
+            }
+
             REDIRECT_INNER(fi_cq_msg_entry, ent_);
         };
         class PassiveEndpoint;
@@ -394,6 +405,7 @@ public:
 
           public:
             fid_domain* domain_;
+
             fid* get_fid() {
                 return &domain_->fid;
             }
@@ -430,47 +442,51 @@ public:
             }
             HAS_FID_DTOR(CompletionQueue)
 
-        int poll() {
-            CompletionQueueMsgEntry ent {};
-            int rc = fi_cq_readfrom(cq, &ent, 1, ent.addr_());
-            if (rc == -EAGAIN) {
-                return 0;
+            int poll() {
+                CompletionQueueMsgEntry ent {};
+                int rc = fi_cq_readfrom(cq, &ent, 1, ent.addr_());
+                if (rc == -EAGAIN) {
+                    return 0;
+                }
+                if (rc == -FI_EAVAIL) {
+                    CompletionQueueErrEntry err_ent {};
+                    rc = fi_cq_readerr(cq, &err_ent.ent_, 0);
+                    auto err_data = std::vector<char>(1024);
+                    fi_cq_strerror(
+                        cq,
+                        err_ent->prov_errno,
+                        err_ent->err_data,
+                        err_data.data(),
+                        1024
+                    );
+                    auto err_string =
+                        std::string_view(err_data.begin(), err_data.end());
+                    S_ERROR(
+                        "cq_poll error: {}, prov_errno: {}, prov_error: {}",
+                        err_ent->err,
+                        err_ent->prov_errno,
+                        err_string
+                    );
+                    memcpy(&ent, &err_ent, sizeof(ent));
+                }
+                if (rc == 1 && ent->flags & FI_RECV) {
+                    S_DBUG(
+                        "receive FI_RECV with addr: {}",
+                        fmt::ptr(ent.addr_())
+                    );
+                    auto awaker =
+                        static_cast<Awaker<Address>*>(ent->op_context);
+                    awaker->wake(ent.addr());
+                } else if (rc == 1 && ent->flags & (FI_SEND | FI_WRITE)) {
+                    auto awaker = static_cast<Awaker<void>*>(ent->op_context);
+                    awaker->wake();
+                } else if (rc == 1) {
+                    S_ERROR("unexpected event={}", ent->flags);
+                } else {
+                    S_WARN("fi_cq_readfrom: rc={}", rc);
+                }
+                return rc;
             }
-            if (rc == -FI_EAVAIL) {
-                CompletionQueueErrEntry err_ent {};
-                rc = fi_cq_readerr(cq, &err_ent.ent_, 0);
-                auto err_data = std::vector<char>(1024);
-                fi_cq_strerror(
-                    cq,
-                    err_ent->prov_errno,
-                    err_ent->err_data,
-                    err_data.data(),
-                    1024
-                );
-                auto err_string =
-                    std::string_view(err_data.begin(), err_data.end());
-                S_ERROR(
-                    "cq_poll error: {}, prov_errno: {}, prov_error: {}",
-                    err_ent->err,
-                    err_ent->prov_errno,
-                    err_string
-                );
-                memcpy(&ent, &err_ent, sizeof(ent));
-            }
-            if (rc == 1 && ent->flags & FI_RECV) {
-                S_DBUG("receive FI_RECV with addr: {}", fmt::ptr(ent.addr_()));
-                auto awaker = static_cast<Awaker<Address>*>(ent->op_context);
-                awaker->wake(ent.addr());
-            } else if (rc == 1 && ent->flags & (FI_SEND | FI_WRITE)) {
-                auto awaker = static_cast<Awaker<void>*>(ent->op_context);
-                awaker->wake();
-            } else if (rc == 1) {
-                S_ERROR("unexpected event={}", ent->flags);
-            } else {
-                S_WARN("fi_cq_readfrom: rc={}", rc);
-            }
-            return rc;
-        }
         };
 
         class MemoryBuffer {
@@ -823,3 +839,5 @@ public:
     } // namespace fab
 } // namespace net
 } // namespace sqk
+
+#endif // !SQK_NET_FABRIC_FABRIC_HPP_

@@ -1,11 +1,14 @@
+#ifndef SQK_IO_BLOB_BLOB_HPP_
+#define SQK_IO_BLOB_BLOB_HPP_
+
 #include "core.hpp"
 #include "spdk/bdev.h"
 #include "spdk/blob.h"
 #include "spdk/blob_bdev.h"
 #include "spdk/env.h"
-#include "spdk/thread.h"
 #include "spdk/init.h"
 #include "spdk/log.h"
+#include "spdk/thread.h"
 
 namespace sqk::io::blob {
 using std::enable_shared_from_this;
@@ -247,3 +250,5 @@ inline uint8_t* dma_alloc(
 }
 
 } // namespace sqk::io::blob
+
+#endif // !SQK_IO_BLOB_BLOB_HPP_

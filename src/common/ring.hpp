@@ -41,12 +41,12 @@ static inline void sqk_pause(void) {
  *  * definition to mark a variable or function parameter as used so
  *   * as to avoid a compiler warning
  *    */
-#define SQK_SET_USED(x) (void)(x)
+#define SQK_SET_USED(x)       (void)(x)
 
 /**
  * Force alignment
  */
-#define __sqk_aligned(a) __attribute__((__aligned__(a)))
+#define __sqk_aligned(a)      __attribute__((__aligned__(a)))
 
 #ifdef SQK_ARCH_STRICT_ALIGN
 typedef uint64_t unaligned_uint64_t __sqk_aligned(1);
@@ -91,9 +91,9 @@ typedef struct {
  */
 #define SQK_ALIGN(val, align) SQK_ALIGN_CEIL(val, align)
 
-#define SQK_RING_SZ_MASK (0x7fffffffU) /**< Ring size mask */
+#define SQK_RING_SZ_MASK      (0x7fffffffU) /**< Ring size mask */
 /* true if x is a power of 2 */
-#define POWEROF2(x) ((((x) - 1) & (x)) == 0)
+#define POWEROF2(x)           ((((x) - 1) & (x)) == 0)
 
 inline void sqk_smp_rmb() {}
 
@@ -128,8 +128,9 @@ inline void sqk_wait_until_equal_32(
                (volatile std::atomic<uint32_t>*)addr,
                memorder
            )
-           != expected)
+           != expected) {
         sqk_pause();
+    }
 }
 
 namespace sqk::common {
@@ -385,8 +386,9 @@ struct Ring {
                 }
             }
 
-            if (n == 0)
+            if (n == 0) {
                 break;
+            }
 
             np.pos.tail_ = op.pos.tail_;
             np.pos.head_ = op.pos.head_ + n;
@@ -439,11 +441,13 @@ struct Ring {
                     ring[idx++] = obj[i++]; /* fallthrough */
             }
         } else {
-            for (i = 0; idx < size; i++, idx++)
+            for (i = 0; idx < size; i++, idx++) {
                 ring[idx] = obj[i];
+            }
             /* Start at the beginning */
-            for (idx = 0; i < n; i++, idx++)
+            for (idx = 0; i < n; i++, idx++) {
                 ring[idx] = obj[i];
+            }
         }
     }
 
@@ -455,18 +459,21 @@ struct Ring {
         sqk_int128_t* ring = (sqk_int128_t*)&this[1];
         const sqk_int128_t* obj = (const sqk_int128_t*)entries;
         if (likely(idx + n < size)) {
-            for (i = 0; i < (n & ~0x1); i += 2, idx += 2)
+            for (i = 0; i < (n & ~0x1); i += 2, idx += 2) {
                 memcpy((void*)(ring + idx), (const void*)(obj + i), 32);
+            }
             switch (n & 0x1) {
                 case 1:
                     memcpy((void*)(ring + idx), (const void*)(obj + i), 16);
             }
         } else {
-            for (i = 0; idx < size; i++, idx++)
+            for (i = 0; idx < size; i++, idx++) {
                 memcpy((void*)(ring + idx), (const void*)(obj + i), 16);
+            }
             /* Start at the beginning */
-            for (idx = 0; i < n; i++, idx++)
+            for (idx = 0; i < n; i++, idx++) {
                 memcpy((void*)(ring + idx), (const void*)(obj + i), 16);
+            }
         }
     }
 
@@ -492,11 +499,13 @@ struct Ring {
                     ring[idx++] = obj[i++];
             }
         } else {
-            for (i = 0; idx < size; i++, idx++)
+            for (i = 0; idx < size; i++, idx++) {
                 ring[idx] = obj[i];
+            }
             /* Start at the beginning */
-            for (idx = 0; i < n; i++, idx++)
+            for (idx = 0; i < n; i++, idx++) {
                 ring[idx] = obj[i];
+            }
         }
     }
 
@@ -543,12 +552,13 @@ struct Ring {
     ) {
         SQK_SET_USED(enqueue);
 
-        if (!single)
+        if (!single) {
             sqk_wait_until_equal_32(
                 &ht.tail_,
                 old_val,
                 std::memory_order_relaxed
             );
+        }
 
         std::atomic_store_explicit(
             reinterpret_cast<volatile std::atomic<uint32_t>*>(&ht.tail_),
@@ -595,8 +605,9 @@ struct Ring {
                 }
             }
 
-            if (unlikely(n == 0))
+            if (unlikely(n == 0)) {
                 break;
+            }
 
             np.pos.tail_ = op.pos.tail_;
             np.pos.head_ = op.pos.head_ + n;
@@ -673,8 +684,9 @@ struct Ring {
                 }
             }
 
-            if (unlikely(n == 0))
+            if (unlikely(n == 0)) {
                 return 0;
+            }
 
             new_head = old_head + n;
             if constexpr (cons_sync_type == RingSyncType::SQK_RING_SYNC_ST) {
@@ -717,11 +729,13 @@ struct Ring {
                     obj[i++] = ring[idx++]; /* fallthrough */
             }
         } else {
-            for (i = 0; idx < size; i++, idx++)
+            for (i = 0; idx < size; i++, idx++) {
                 obj[i] = ring[idx];
+            }
             /* Start at the beginning */
-            for (idx = 0; i < n; i++, idx++)
+            for (idx = 0; i < n; i++, idx++) {
                 obj[i] = ring[idx];
+            }
         }
     }
 
@@ -732,18 +746,21 @@ struct Ring {
         sqk_int128_t* ring = (sqk_int128_t*)&this[1];
         sqk_int128_t* obj = (sqk_int128_t*)entries;
         if (likely(idx + n < size)) {
-            for (i = 0; i < (n & ~0x1); i += 2, idx += 2)
+            for (i = 0; i < (n & ~0x1); i += 2, idx += 2) {
                 memcpy((void*)(obj + i), (void*)(ring + idx), 32);
+            }
             switch (n & 0x1) {
                 case 1:
                     memcpy((void*)(obj + i), (void*)(ring + idx), 16);
             }
         } else {
-            for (i = 0; idx < size; i++, idx++)
+            for (i = 0; idx < size; i++, idx++) {
                 memcpy((void*)(obj + i), (void*)(ring + idx), 16);
+            }
             /* Start at the beginning */
-            for (idx = 0; i < n; i++, idx++)
+            for (idx = 0; i < n; i++, idx++) {
                 memcpy((void*)(obj + i), (void*)(ring + idx), 16);
+            }
         }
     }
 
@@ -784,11 +801,13 @@ struct Ring {
                     obj[i++] = ring[idx++]; /* fallthrough */
             }
         } else {
-            for (i = 0; idx < size; i++, idx++)
+            for (i = 0; idx < size; i++, idx++) {
                 obj[i] = ring[idx];
+            }
             /* Start at the beginning */
-            for (idx = 0; i < n; i++, idx++)
+            for (idx = 0; i < n; i++, idx++) {
                 obj[i] = ring[idx];
+            }
         }
     }
 

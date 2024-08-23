@@ -27,8 +27,9 @@ run(Fabric& fabric,
     av_attr->count = send_first ? 1 : 100;
     AddressVector av(domain, av_attr);
     Address srv_addr {};
-    if (send_first)
+    if (send_first) {
         srv_addr = av.insert(info.dst_addr());
+    }
 
     uint64_t cnt {};
 
@@ -59,8 +60,9 @@ run(Fabric& fabric,
     }(cq));
 
     Endpoint* ep;
-    if (!send_first)
+    if (!send_first) {
         ep = new Endpoint(domain, info, eq, cq, av);
+    }
     for (;;) {
         if (send_first) {
             auto endpoint = Endpoint(domain, info, eq, cq, av);
@@ -94,8 +96,9 @@ run(Fabric& fabric,
         }
         S_INFO("evt, cnt: {}", cnt);
     }
-    if (!send_first)
+    if (!send_first) {
         delete ep;
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -118,7 +121,8 @@ int main(int argc, char* argv[]) {
                     da->name = strdup(da_name);
                 }
                 da->mr_mode = FI_MR_LOCAL | FI_MR_RAW | FI_MR_VIRT_ADDR
-                    | FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_ENDPOINT;
+                              | FI_MR_ALLOCATED | FI_MR_PROV_KEY
+                              | FI_MR_ENDPOINT;
             });
 
     hint.print();
@@ -161,7 +165,9 @@ int main(int argc, char* argv[]) {
     S_INFO("mr key: {}, addr: {}", keys.rkey, keys.addr);
 
     S_INFO("wawwawawa");
-    sqk::scheduler->enqueue(run(fabric, info, eq, cq, domain, keys, buf, mr, hint));
+    sqk::scheduler->enqueue(
+        run(fabric, info, eq, cq, domain, keys, buf, mr, hint)
+    );
     sqk::scheduler->run();
     return 0;
 }

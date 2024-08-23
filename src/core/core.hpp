@@ -2,7 +2,6 @@
 #define SQK_CORE_HPP
 
 #include <coroutine>
-#include <list>
 
 #include "log.hpp"
 #include "ring.hpp"
@@ -10,7 +9,7 @@
 namespace sqk {
 
 template<typename T>
-struct SuspendAlways;
+struct MaybeSuspend;
 template<typename T>
 struct Promise;
 
@@ -30,7 +29,7 @@ using sqk::common::MpscRing;
 using sqk::common::RingGuard;
 
 struct SQKScheduler {
-    alignas(SQK_CACHE_LINESIZE) bool stopped {};
+    alignas(SQK_CACHE_LINESIZE) bool stopped_ {};
     RingGuard<MpscRing<std::coroutine_handle<>>> queue_;
 
   public:
@@ -47,15 +46,16 @@ struct SQKScheduler {
     }
 
     void stop() {
-        stopped = 1;
+        stopped_ = 1;
     }
 
     int run() {
         std::coroutine_handle<> handle;
         for (;;) {
             if (likely(queue_->dequeue(handle))) {
+                S_DBUG("resume: {}", handle.address());
                 handle.resume();
-                if (unlikely(stopped)) {
+                if (unlikely(stopped_)) {
                     return 0;
                 }
             }
@@ -138,63 +138,62 @@ struct Awaker<void>: Awaker_Base {
 
 struct CheckableAwaker_Base {
     bool is_awaked() const noexcept {
-        return awaked;
+        return awaked_;
     }
 
   protected:
-    bool awaked {};
+    bool awaked_ {};
 };
 
 template<typename T>
 struct CheckableAwaker: Awaker<T>, CheckableAwaker_Base {
     bool await_ready() const noexcept {
-        return awaked;
+        return awaked_;
     }
 
     void wake(T&& ret) {
         Awaker<T>::wake(std::move(ret));
-        awaked = true;
+        awaked_ = true;
     }
 
     void await_suspend(std::coroutine_handle<> handle) noexcept {
         Awaker<T>::await_suspend(handle);
-        awaked = false;
+        awaked_ = false;
     }
 };
 
 template<>
 struct CheckableAwaker<void>: Awaker<void>, CheckableAwaker_Base {
     bool await_ready() const noexcept {
-        return awaked;
+        return awaked_;
     }
 
     void wake() {
         Awaker<void>::wake();
-        awaked = true;
+        awaked_ = true;
     }
 
     void await_suspend(std::coroutine_handle<> handle) noexcept {
         Awaker<void>::await_suspend(handle);
-        awaked = false;
+        awaked_ = false;
     }
 };
 
 template<typename T>
-struct SuspendAlways {
-    T val_;
-
-    constexpr bool await_ready() const noexcept {
-        return false;
-    }
+struct MaybeSuspend_Base {
+    Promise<T>& promise_;
+    bool await_ready() const noexcept;
 
     void await_suspend(std::coroutine_handle<> handle) noexcept {}
 
-    T&& await_resume() noexcept {
-        S_DBUG("await_resume");
-        return std::move(val_);
-    }
+    MaybeSuspend_Base(Promise<T>& promise) : promise_(promise) {}
+};
 
-    SuspendAlways() : val_() {}
+template<typename T>
+struct MaybeSuspend: MaybeSuspend_Base<T> {
+    T&& await_resume() noexcept;
+
+    MaybeSuspend(Promise<T>& promise) : MaybeSuspend_Base<T>(promise) {}
 };
 
 struct SuspendYield {
@@ -210,26 +209,54 @@ struct SuspendYield {
 };
 
 template<>
-struct SuspendAlways<void> {
-    constexpr bool await_ready() const noexcept {
-        return false;
+struct MaybeSuspend<void>: MaybeSuspend_Base<void> {
+    void await_resume() const noexcept;
+
+    MaybeSuspend(Promise<void>& promise) : MaybeSuspend_Base<void>(promise) {}
+};
+
+/**
+ * FinalSuspend aim to ensure all coro suspend at least once
+ *
+ * if `Task` has no caller_, it imply that this coro has run complete on await_transform
+ *
+ * or it was submit to scheduler
+ *
+ * FIXME: submitted task should be destroyed
+ *
+ */
+struct FinalSuspend {
+    bool ready_;
+
+    FinalSuspend(bool ready) : ready_(ready) {}
+
+    bool await_ready() const noexcept {
+        return ready_;
     }
 
-    void await_suspend(std::coroutine_handle<> handle) const noexcept {}
+    constexpr void await_suspend(std::coroutine_handle<>) const noexcept {}
 
-    void await_resume() const noexcept {}
+    constexpr void await_resume() const noexcept {}
 };
 
 template<typename T, typename S>
 struct PromiseBase {
+    ~PromiseBase() {
+        S_DBUG("~{}()", get_return_object().address());
+    }
+
+    PromiseBase() {
+        S_DBUG("{}()", get_return_object().address());
+    }
+
     std::suspend_always initial_suspend() noexcept {
         S_DBUG("initial_suspend: {}", get_return_object().address());
         return {};
     }
 
-    std::suspend_never final_suspend() noexcept {
+    FinalSuspend final_suspend() noexcept {
         S_DBUG("final_suspend: {}", get_return_object().address());
-        return {};
+        return this->resume_caller();
     }
 
     void unhandled_exception() {
@@ -242,15 +269,20 @@ struct PromiseBase {
     }
 
     template<typename T2>
-    SuspendAlways<T2>&& await_transform(Task<T2> task) {
-        task.promise().caller = get_return_object();
-        scheduler->enqueue(task);
+    MaybeSuspend<T2> await_transform(Task<T2> task) {
+        S_DBUG("task resume: {}", task.address());
+        S_ASSERT(task.promise().caller_ == nullptr);
+        task.resume(); // do (initial_suspend, first_suspend)
+        if (!task.done()) { // exist suspend on coro body
+            task.promise().caller_ = get_return_object();
+        }
         S_DBUG(
-            "await_transform: {} self: {}",
+            "await_transform: {}, done?={}, self: {}",
             task.address(),
+            task.done(),
             get_return_object().address()
         );
-        return std::move(task.promise().result_);
+        return MaybeSuspend(task.promise());
     }
 
     template</*typename T2, */ typename T1>
@@ -262,23 +294,29 @@ struct PromiseBase {
         return {Task<T>::from_promise(*static_cast<S*>(this))};
     }
 
-    void resume_caller() {
-        if (this->caller.address() != nullptr) {
-            this->caller.resume();
+    bool resume_caller() {
+        if (this->caller_.address() != nullptr) {
+            S_DBUG("resume_caller: {}", this->caller_.address());
+            this->caller_.resume();
+            // caller has resumed explicit; this coro can be destroyed
+            // immediatly
+            return true;
         } else {
             S_DBUG("caller=null {}", this->get_return_object().address());
+            // there is no caller,
+            return false;
         }
     }
 
-    std::coroutine_handle<> caller {nullptr};
-    SuspendAlways<T> result_;
+    std::coroutine_handle<> caller_ {nullptr};
 };
 
 template<typename T>
 struct Promise: PromiseBase<T, Promise<T>> {
+    T result_;
+
     void return_value(T&& ret) {
-        this->result_.val_ = std::move(ret);
-        this->resume_caller();
+        this->result_ = std::move(ret);
         S_DBUG("return_value quit {}", this->get_return_object().address());
     }
 
@@ -289,9 +327,47 @@ template<>
 struct Promise<void>: PromiseBase<void, Promise<void>> {
     void return_void() {
         S_DBUG("return_void");
-        this->resume_caller();
     }
 };
+
+template<typename T>
+inline bool MaybeSuspend_Base<T>::await_ready() const noexcept {
+    S_DBUG(
+        "await_ready hdl: {}, done={}",
+        promise_.get_return_object().address(),
+        promise_.get_return_object().done()
+    );
+    return promise_.get_return_object().done();
+}
+
+template<typename T>
+inline T&& MaybeSuspend<T>::await_resume() noexcept {
+    S_DBUG(
+        "await_resume hdl: {}, done={}",
+        this->promise_.get_return_object().address(),
+        this->promise_.get_return_object().done()
+    );
+    T&& ret = std::move(this->promise_.result_);
+    // caller is null means this coro was directly resumed on co_await,
+    // and now it was in final_suspend point,
+    // in this case, we should call destroy explicit
+    if (!this->promise_.caller_) {
+        this->promise_.get_return_object().destroy();
+    }
+    return std::move(ret);
+}
+
+inline void MaybeSuspend<void>::await_resume() const noexcept {
+    if (!this->promise_.caller_) {
+        promise_.get_return_object().destroy();
+    }
+}
+
+template<>
+inline bool MaybeSuspend_Base<void>::await_ready() const noexcept {
+    return promise_.get_return_object().done();
+}
+
 } // namespace sqk
 
 #endif // !SQK_CORE_HPP

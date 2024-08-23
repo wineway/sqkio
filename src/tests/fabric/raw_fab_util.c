@@ -261,8 +261,9 @@ int server(void) {
     hints->mode = FI_CONTEXT | FI_LOCAL_MR | FI_RX_CQ_DATA;
 
     int ret = common_init(NULL, FI_SOURCE);
-    if (ret)
+    if (ret) {
         return ret;
+    }
 
     ret = server_init();
 
@@ -279,10 +280,12 @@ void* cq_thread(void* arg) {
 
     while (run) {
         ret = fi_cq_sread(cq, &comp, 1, NULL, -1);
-        if (!run)
+        if (!run) {
             break;
-        if (ret == -FI_EAGAIN)
+        }
+        if (ret == -FI_EAGAIN) {
             continue;
+        }
 
         if (ret != 1) {
             perror("fi_cq_sread");
@@ -399,8 +402,9 @@ void* client_thread(void* arg) {
         }
 
         pthread_mutex_lock(&ctx->lock);
-        while (!ctx->ready)
+        while (!ctx->ready) {
             pthread_cond_wait(&ctx->cond, &ctx->lock);
+        }
         ctx->ready = 0;
         pthread_mutex_unlock(&ctx->lock);
     }
@@ -417,16 +421,20 @@ int client(char* addr, int threads, int size, int count) {
     hints->ep_attr->type = FI_EP_MSG;
     hints->domain_attr->mr_mode = FI_MR_BASIC;
     hints->caps = FI_MSG | FI_RMA;
-    hints->mode = FI_MR_LOCAL | FI_CONTEXT
-        | FI_RX_CQ_DATA; //  | FI_MR_ENDPOINT | FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_VIRT_ADDR | FI_MR_RAW;
+    hints->mode =
+        FI_MR_LOCAL | FI_CONTEXT
+        | FI_RX_CQ_DATA; //  | FI_MR_ENDPOINT | FI_MR_ALLOCATED | FI_MR_PROV_KEY
+                         //  | FI_MR_VIRT_ADDR | FI_MR_RAW;
 
     int ret = common_init(addr, 0);
-    if (ret)
+    if (ret) {
         return ret;
+    }
 
     ret = client_init();
-    if (ret)
+    if (ret) {
         return ret;
+    }
 
     int i;
     for (i = 0; i < threads; i++) {
@@ -468,8 +476,8 @@ int main(int argc, char* argv[]) {
     }
 
     // if (argc != 5) {
-    // 	fprintf(stderr, "usage: %s addr threads size count rkey addr\n", argv[0]);
-    // 	return -1;
+    // 	fprintf(stderr, "usage: %s addr threads size count rkey addr\n",
+    // argv[0]); 	return -1;
     // }
 
     char* addr = argv[1];

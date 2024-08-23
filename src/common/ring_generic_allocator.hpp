@@ -2,14 +2,15 @@
 #define SQK_COMMON_RING_GENERIC_ALLOCATOR_HPP_
 
 #ifdef __linux__
-#include <sys/mman.h>
+    #include <sys/mman.h>
 #endif
 
 #include <memory>
+
 namespace sqk::common {
 
-template <typename T>
-struct Allocator : std::allocator<T> {
+template<typename T>
+struct Allocator: std::allocator<T> {
 #ifdef __linux__
     [[gnu::always_inline]]
     constexpr T* allocate(size_t n) {
@@ -19,6 +20,6 @@ struct Allocator : std::allocator<T> {
     }
 #endif
 };
-}
+} // namespace sqk::common
 
 #endif // !SQK_COMMON_RING_GENERIC_ALLOCATOR_HPP_

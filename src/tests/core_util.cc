@@ -1,5 +1,6 @@
-#include "core.hpp"
 #include <iostream>
+
+#include "core.hpp"
 
 using double_t = double;
 

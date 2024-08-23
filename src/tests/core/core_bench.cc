@@ -52,6 +52,14 @@ sqk::Task<int> run_bench() {
     co_return 0;
 }
 
+// https://gcc.gnu.org/bugzilla/show_bug.cgi?id=90333
+[[gnu::noinline]]
+void bench_fn() {
+    i++;
+    doNotOptimizeAway(i);
+    return;
+}
+
 int main(int argc, char* argv[]) {
     sqk::scheduler = new sqk::SQKScheduler;
     sqk::scheduler->enqueue(run_bench());
@@ -60,11 +68,7 @@ int main(int argc, char* argv[]) {
     Bench()
         .name("function benchmark")
         .minEpochIterations(epochIterations)
-        .run([]() {
-            i++;
-            doNotOptimizeAway(i);
-            return;
-        });
+        .run(bench_fn);
 
     Bench()
         .name("thread benchmark")
