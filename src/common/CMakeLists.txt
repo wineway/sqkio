@@ -1,4 +1,5 @@
 project(common)
+add_subdirectory(tlsf)
 
 add_library(${PROJECT_NAME} INTERFACE)
 
@@ -8,6 +9,8 @@ target_include_directories(${PROJECT_NAME}
 		$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+target_link_libraries(${PROJECT_NAME} INTERFACE tlsf)
 
 target_sources(${PROJECT_NAME}
         INTERFACE FILE_SET HEADERS
@@ -33,7 +36,6 @@ target_include_directories(${PROJECT_NAME}
 endif()
 
 if (INSTALL_SQKIO)
-set(test_dir /tmp)
   install(TARGETS ${PROJECT_NAME}
 EXPORT "${PROJECT_NAME}Targets"
         FILE_SET HEADERS DESTINATION ${SQKIO_INSTALL_INCLUDEDIR}

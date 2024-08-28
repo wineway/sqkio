@@ -5,6 +5,7 @@
 
 #include "log.hpp"
 #include "ring.hpp"
+#include "allocator.hpp"
 
 namespace sqk {
 
@@ -240,7 +241,7 @@ struct FinalSuspend {
 };
 
 template<typename T, typename S>
-struct PromiseBase {
+struct PromiseBase: public common::PoolAllocatable {
     ~PromiseBase() {
         S_DBUG("~{}()", get_return_object().address());
     }
