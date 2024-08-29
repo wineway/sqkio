@@ -17,6 +17,8 @@ class A {
 
 sqk::Task<A> f() {
     std::cout << "f()" << std::endl;
+    int a[5];
+    std::cout << a << std::endl;
     co_return A();
 }
 
@@ -31,7 +33,9 @@ sqk::Task<void> j() {
 }
 
 sqk::Task<int> g() {
-    A i = co_await f();
+    auto v = f();
+    std::cout << "v: size=" << sizeof(v) << std::endl;
+    A i = co_await v;
     std::cout << "assigned" << std::endl;
     co_await k();
     std::cout << "g()" << std::endl;

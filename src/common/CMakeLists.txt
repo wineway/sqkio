@@ -1,21 +1,20 @@
 project(common)
 add_subdirectory(tlsf)
 
-add_library(${PROJECT_NAME} INTERFACE)
+add_library(${PROJECT_NAME} SHARED)
 
 target_include_directories(${PROJECT_NAME}
-  INTERFACE
-		$<INSTALL_INTERFACE:include>
+  PUBLIC
 		$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+		$<INSTALL_INTERFACE:include>
+  PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(${PROJECT_NAME} INTERFACE tlsf)
+target_link_libraries(${PROJECT_NAME} PUBLIC tlsf)
 
 target_sources(${PROJECT_NAME}
-        INTERFACE FILE_SET HEADERS
-        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-        FILES ring.hpp)
+        PRIVATE tlsf_allocator.cc)
 
 if(APPLE)
   execute_process(COMMAND sysctl -n hw.cachelinesize
@@ -26,11 +25,11 @@ elseif(UNIX)
   OUTPUT_VARIABLE CACHE_LINESIZE
   OUTPUT_STRIP_TRAILING_WHITESPACE)
 endif()
-target_compile_definitions(${PROJECT_NAME} INTERFACE SQK_CACHE_LINESIZE=${CACHE_LINESIZE})
+target_compile_definitions(${PROJECT_NAME} PUBLIC SQK_CACHE_LINESIZE=${CACHE_LINESIZE})
 
 if (WITH_SPDLOG)
 target_include_directories(${PROJECT_NAME}
-  INTERFACE
+  PUBLIC
 		${spdlog_SOURCE_DIR}/include
   )
 endif()

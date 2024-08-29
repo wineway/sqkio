@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "log.hpp"
+#include "utilty.h"
 #include "ring_generic_allocator.hpp"
 
 static_assert(sizeof(std::atomic<uint32_t>) == sizeof(uint32_t), "");
@@ -27,13 +28,6 @@ static_assert(sizeof(std::atomic<uint64_t>) == sizeof(uint64_t), "");
 static inline void sqk_pause(void) {
     _mm_pause();
 }
-
-#ifndef likely
-    #define likely(x) __builtin_expect((x), 1)
-#endif
-#ifndef unlikely
-    #define unlikely(x) __builtin_expect((x), 0)
-#endif
 
 #define SQK_CACHELINE_ALIGNED alignas(SQK_CACHE_LINESIZE)
 

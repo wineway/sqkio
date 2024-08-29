@@ -235,13 +235,13 @@ struct FinalSuspend {
         return ready_;
     }
 
-    constexpr void await_suspend(std::coroutine_handle<>) const noexcept {}
+    [[gnu::always_inline]] constexpr void await_suspend(std::coroutine_handle<>) const noexcept {}
 
     constexpr void await_resume() const noexcept {}
 };
 
 template<typename T, typename S>
-struct PromiseBase: public common::PoolAllocatable {
+struct PromiseBase: public common::PoolAllocatable<common::SlabPoolAllocator> {
     ~PromiseBase() {
         S_DBUG("~{}()", get_return_object().address());
     }

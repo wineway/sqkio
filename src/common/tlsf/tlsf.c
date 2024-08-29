@@ -453,9 +453,6 @@ static __inline__ bhdr_t *process_area(void *area, size_t size)
     return ib;
 }
 
-char * init() {
-    return NULL;
-}
 /******************************************************************/
 /******************** Begin of the allocator code *****************/
 /******************************************************************/
