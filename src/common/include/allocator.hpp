@@ -120,7 +120,7 @@ private:
         } else {
             ptr = static_cast<uint8_t*>(::operator new(rsize + SLAB_OVERHEAD)) + SLAB_OVERHEAD;
             SlabHeader* header = ptr2header(ptr);
-            header->ind_ = LOOKUP_MAX_CLASS;
+            header->ind_ = std::min(ind, LOOKUP_MAX_CLASS);
 #ifndef NDEBUG
             header->magic_ = SLAB_MAGIC;
 #endif // !NDEBUG

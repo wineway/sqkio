@@ -2,6 +2,7 @@
 #define SQK_CORE_HPP
 
 #include <coroutine>
+#include <variant>
 
 #include "log.hpp"
 #include "ring.hpp"
@@ -37,6 +38,7 @@ struct SQKScheduler {
     template<typename T>
     int enqueue(Task<T> handle) {
         queue_->enqueue(handle);
+        handle.promise().caller_ = std::noop_coroutine(); // enqueue task manual has no caller to co_await
         return 0;
     }
 
@@ -192,7 +194,7 @@ struct MaybeSuspend_Base {
 
 template<typename T>
 struct MaybeSuspend: MaybeSuspend_Base<T> {
-    T&& await_resume() noexcept;
+    T&& await_resume();
 
     MaybeSuspend(Promise<T>& promise) : MaybeSuspend_Base<T>(promise) {}
 };
@@ -211,7 +213,7 @@ struct SuspendYield {
 
 template<>
 struct MaybeSuspend<void>: MaybeSuspend_Base<void> {
-    void await_resume() const noexcept;
+    void await_resume() const;
 
     MaybeSuspend(Promise<void>& promise) : MaybeSuspend_Base<void>(promise) {}
 };
@@ -221,9 +223,7 @@ struct MaybeSuspend<void>: MaybeSuspend_Base<void> {
  *
  * if `Task` has no caller_, it imply that this coro has run complete on await_transform
  *
- * or it was submit to scheduler
- *
- * FIXME: submitted task should be destroyed
+ * if it was submit to scheduler directly, it's caller_ will be noop_coroutine
  *
  */
 struct FinalSuspend {
@@ -258,11 +258,6 @@ struct PromiseBase: public common::PoolAllocatable<common::SlabPoolAllocator> {
     FinalSuspend final_suspend() noexcept {
         S_DBUG("final_suspend: {}", get_return_object().address());
         return this->resume_caller();
-    }
-
-    void unhandled_exception() {
-        S_INFO("unhandled exception");
-        std::rethrow_exception(std::current_exception());
     }
 
     SuspendYield yield_value(std::nullptr_t) {
@@ -314,11 +309,16 @@ struct PromiseBase: public common::PoolAllocatable<common::SlabPoolAllocator> {
 
 template<typename T>
 struct Promise: PromiseBase<T, Promise<T>> {
-    T result_;
-
+    std::variant<T, std::exception_ptr> result_;
     void return_value(T&& ret) {
         this->result_ = std::move(ret);
         S_DBUG("return_value quit {}", this->get_return_object().address());
+    }
+
+    // seems it have a very poor exception performance
+    void unhandled_exception() {
+        S_INFO("unhandled exception");
+        this->result_ = std::current_exception();
     }
 
   private:
@@ -326,9 +326,16 @@ struct Promise: PromiseBase<T, Promise<T>> {
 
 template<>
 struct Promise<void>: PromiseBase<void, Promise<void>> {
+    std::exception_ptr result_;
     void return_void() {
         S_DBUG("return_void");
     }
+
+    void unhandled_exception() {
+        S_INFO("unhandled exception");
+        this->result_ = std::current_exception();
+    }
+
 };
 
 template<typename T>
@@ -342,25 +349,37 @@ inline bool MaybeSuspend_Base<T>::await_ready() const noexcept {
 }
 
 template<typename T>
-inline T&& MaybeSuspend<T>::await_resume() noexcept {
+inline T&& MaybeSuspend<T>::await_resume() {
     S_DBUG(
         "await_resume hdl: {}, done={}",
         this->promise_.get_return_object().address(),
         this->promise_.get_return_object().done()
     );
-    T&& ret = std::move(this->promise_.result_);
-    // caller is null means this coro was directly resumed on co_await,
-    // and now it was in final_suspend point,
-    // in this case, we should call destroy explicit
-    if (!this->promise_.caller_) {
-        this->promise_.get_return_object().destroy();
+    if (likely(std::holds_alternative<T>(this->promise_.result_))) {
+        T&& ret = std::move(std::get<T>(this->promise_.result_));
+        // caller is null means this coro was directly resumed on co_await,
+        // and now it was in final_suspend point,
+        // in this case, we should call destroy explicit
+        if (!this->promise_.caller_) {
+            this->promise_.get_return_object().destroy();
+        }
+        return std::move(ret);
+    } else {
+        auto except = std::get<std::exception_ptr>(this->promise_.result_);
+        if (!this->promise_.caller_) {
+            this->promise_.get_return_object().destroy();
+        }
+        std::rethrow_exception(except);
     }
-    return std::move(ret);
 }
 
-inline void MaybeSuspend<void>::await_resume() const noexcept {
+inline void MaybeSuspend<void>::await_resume() const {
+    std::exception_ptr except = this->promise_.result_;
     if (!this->promise_.caller_) {
         promise_.get_return_object().destroy();
+    }
+    if (unlikely(except.operator bool())) {
+        std::rethrow_exception(except);
     }
 }
 

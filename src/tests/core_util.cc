@@ -3,6 +3,9 @@
 #include "core.hpp"
 
 using double_t = double;
+#define ST_ASSERT(e)                                                           \
+    if (!(e))                                                                  \
+    exit(1)
 
 class A {
   public:
@@ -43,9 +46,37 @@ sqk::Task<int> g() {
     co_return 1;
 }
 
-int main() {
+sqk::Task<int> throws() {
+    throw std::exception();
+}
+
+sqk::Task<int> no_catch() {
+    co_await throws();
+    co_return 1;
+}
+
+sqk::Task<int> catch_throws() {
+    try {
+        co_await no_catch();
+    } catch (std::exception& e) {
+        exit(0);
+    }
+    exit(1);
+}
+
+sqk::Task<int> run_test(char* argv[]) {
+    if (!strcmp(argv[1], "simple")) {
+        return g();
+    } else if (!strcmp(argv[1], "exception_propagation")) {
+        return catch_throws();
+    }
+    ST_ASSERT(0);
+}
+
+int main(int argc, char* argv[]) {
     S_LOGGER_SETUP;
+    ST_ASSERT(argc == 2);
     sqk::scheduler = new sqk::SQKScheduler;
-    sqk::scheduler->enqueue(g());
+    sqk::scheduler->enqueue(run_test(argv));
     sqk::scheduler->run();
 }

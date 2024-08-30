@@ -14,7 +14,8 @@ add_compile_options("-g")
 add_executable(${PROJECT_NAME}
 	core_util.cc
 )
-add_test(NAME SCHED_TEST COMMAND ${PROJECT_NAME})
+add_test(NAME SCHED_TEST COMMAND ${PROJECT_NAME} "simple")
+add_test(NAME CORO_EXCEPTION_TEST COMMAND ${PROJECT_NAME} "exception_propagation")
 target_link_libraries(${PROJECT_NAME} core)
 target_include_directories(${PROJECT_NAME}
 	PUBLIC

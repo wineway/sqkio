@@ -6,8 +6,10 @@
 #include "spdk/blob.h"
 #include "spdk/blob_bdev.h"
 #include "spdk/env.h"
+#include "spdk/rpc.h"
 #include "spdk/init.h"
 #include "spdk/log.h"
+#include "spdk/file.h"
 #include "spdk/thread.h"
 
 namespace sqk::io::blob {
@@ -191,18 +193,58 @@ struct BlobEnv: enable_shared_from_this<BlobEnv> {
             co_return -1;
         }
         spdk_set_thread(thread);
-        CheckableAwaker<int> waker;
-        spdk_subsystem_init_from_json_config(
-            opt.conf_file.c_str(),
-            SPDK_DEFAULT_RPC_ADDR,
+        size_t json_size;
+        void* json = spdk_posix_file_load_from_name(opt.conf_file.c_str(), &json_size);
+        struct loadConfigArg {
+            CheckableAwaker<int> waker_;
+            void* json_;
+            size_t json_size_;
+        } arg = {
+            .waker_ = CheckableAwaker<int>(),
+            .json_ = json,
+            .json_size_ = json_size,
+        };
+
+        spdk_subsystem_load_config(
+            json,
+            json_size,
             [](int rc, void* cb_arg) {
-                auto waker = static_cast<CheckableAwaker<int>*>(cb_arg);
-                waker->wake(std::move(rc)) /*FIXME*/;
+                if (rc) {
+                    auto& waker = static_cast<loadConfigArg*>(cb_arg)->waker_;
+                    waker.wake(std::move(rc));
+                    return;
+                }
+                spdk_subsystem_init(
+                    [](int rc, void* cb_arg) {
+                        auto arg = static_cast<loadConfigArg*>(cb_arg);
+                        if (rc) {
+                            auto& waker =
+                                static_cast<loadConfigArg*>(cb_arg)->waker_;
+                            waker.wake(std::move(rc));
+                            return;
+                        }
+                        spdk_rpc_set_state(SPDK_RPC_RUNTIME);
+                        S_ASSERT(spdk_rpc_get_state() == SPDK_RPC_RUNTIME);
+                        spdk_subsystem_load_config(
+                            arg->json_,
+                            arg->json_size_,
+                            [](int rc, void* cb_arg) {
+                                auto& waker =
+                                    static_cast<loadConfigArg*>(cb_arg)->waker_;
+                                waker.wake(std::move(rc));
+                            },
+                            cb_arg,
+                            true
+                        );
+                    },
+                    cb_arg
+                );
             },
-            &waker,
+            &arg,
             true
         );
-        while (!waker.is_awaked()) {
+
+        while (!arg.waker_.is_awaked()) {
             spdk_thread_poll(thread, 0, 0);
         }
         spdk_thread_exit(thread);
@@ -211,7 +253,7 @@ struct BlobEnv: enable_shared_from_this<BlobEnv> {
             spdk_thread_poll(thread, 0, 0);
         }
         spdk_thread_destroy(thread);
-        rc = co_await waker;
+        rc = co_await arg.waker_;
         co_return rc;
     }
 
@@ -234,6 +276,9 @@ struct BlobEnv: enable_shared_from_this<BlobEnv> {
             NULL,
             &bs_dev
         );
+        if (rc) {
+            throw std::system_error(rc, std::system_category());
+        }
         return BlobDev(bs_dev);
     }
 };
